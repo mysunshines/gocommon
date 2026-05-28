@@ -1,0 +1,311 @@
+package httpclient
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/mysunshines/gocommon/constants"
+)
+
+// Client HTTP 客户端
+type Client struct {
+	client     *http.Client
+	baseURL    string
+	timeout    time.Duration
+	headers    map[string]string
+	middleware []Middleware
+}
+
+// Middleware HTTP 中间件
+type Middleware func(*http.Request) error
+
+// Config 客户端配置
+type Config struct {
+	BaseURL   string
+	Timeout   time.Duration
+	Headers   map[string]string
+	MaxIdle   int
+	MaxConns  int
+	KeepAlive time.Duration
+}
+
+// Option 配置选项
+type Option func(*Client)
+
+// New 创建 HTTP 客户端
+func New(opts ...Option) *Client {
+	c := &Client{
+		client: &http.Client{
+			Timeout: constants.DefaultReadTimeout * time.Second,
+		},
+		timeout: constants.DefaultReadTimeout * time.Second,
+		headers: make(map[string]string),
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
+}
+
+// WithBaseURL 设置基础 URL
+func WithBaseURL(baseURL string) Option {
+	return func(c *Client) {
+		c.baseURL = baseURL
+	}
+}
+
+// WithTimeout 设置超时时间
+func WithTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		c.timeout = timeout
+		c.client.Timeout = timeout
+	}
+}
+
+// WithHeader 设置默认请求头
+func WithHeader(key, value string) Option {
+	return func(c *Client) {
+		c.headers[key] = value
+	}
+}
+
+// WithHeaders 设置默认请求头
+func WithHeaders(headers map[string]string) Option {
+	return func(c *Client) {
+		for k, v := range headers {
+			c.headers[k] = v
+		}
+	}
+}
+
+// WithMiddleware 添加中间件
+func WithMiddleware(m Middleware) Option {
+	return func(c *Client) {
+		c.middleware = append(c.middleware, m)
+	}
+}
+
+// Response HTTP 响应
+type Response struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+}
+
+// buildURL 构建完整 URL
+func (c *Client) buildURL(path string) string {
+	if c.baseURL == "" {
+		return path
+	}
+
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return c.baseURL + path
+	}
+
+	basePath := u.Path
+	if !strings.HasSuffix(basePath, "/") && !strings.HasPrefix(path, "/") {
+		basePath += "/"
+	} else if strings.HasSuffix(basePath, "/") && strings.HasPrefix(path, "/") {
+		path = path[1:]
+	}
+
+	u.Path = basePath + path
+	return u.String()
+}
+
+// applyHeaders 应用默认请求头
+func (c *Client) applyHeaders(req *http.Request) {
+	for k, v := range c.headers {
+		if req.Header.Get(k) == "" {
+			req.Header.Set(k, v)
+		}
+	}
+}
+
+// executeMiddleware 执行中间件
+func (c *Client) executeMiddleware(req *http.Request) error {
+	for _, m := range c.middleware {
+		if err := m(req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Get GET 请求
+func (c *Client) Get(ctx context.Context, path string, params map[string]string) (*Response, error) {
+	_fullURL := c.buildURL(path)
+	if len(params) > 0 {
+		q := url.Values{}
+		for k, v := range params {
+			q.Set(k, v)
+		}
+		if strings.Contains(_fullURL, "?") {
+			_fullURL += "&" + q.Encode()
+		} else {
+			_fullURL += "?" + q.Encode()
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, _fullURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.do(req)
+}
+
+// Post POST 请求
+func (c *Client) Post(ctx context.Context, path string, body interface{}) (*Response, error) {
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.buildURL(path), reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+
+	return c.do(req)
+}
+
+// Put PUT 请求
+func (c *Client) Put(ctx context.Context, path string, body interface{}) (*Response, error) {
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.buildURL(path), reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+
+	return c.do(req)
+}
+
+// Delete DELETE 请求
+func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.buildURL(path), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.do(req)
+}
+
+// Patch PATCH 请求
+func (c *Client) Patch(ctx context.Context, path string, body interface{}) (*Response, error) {
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.buildURL(path), reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+
+	return c.do(req)
+}
+
+// SendRequest 发送自定义请求
+func (c *Client) SendRequest(ctx context.Context, method, path string, body io.Reader, headerFunc func(http.Header)) (*Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.buildURL(path), body)
+	if err != nil {
+		return nil, err
+	}
+
+	if headerFunc != nil {
+		headerFunc(req.Header)
+	}
+
+	return c.do(req)
+}
+
+// do 执行请求
+func (c *Client) do(req *http.Request) (*Response, error) {
+	// 应用默认请求头
+	c.applyHeaders(req)
+
+	// 执行中间件
+	if err := c.executeMiddleware(req); err != nil {
+		return nil, err
+	}
+
+	// 发送请求
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应体
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response failed: %w", err)
+	}
+
+	return &Response{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header,
+		Body:       body,
+	}, nil
+}
+
+// Unmarshal 解析响应体为 JSON
+func (r *Response) Unmarshal(v interface{}) error {
+	return json.Unmarshal(r.Body, v)
+}
+
+// String 获取响应体字符串
+func (r *Response) String() string {
+	return string(r.Body)
+}
+
+// IsSuccess 检查是否成功响应
+func (r *Response) IsSuccess() bool {
+	return r.StatusCode >= http.StatusOK && r.StatusCode < http.StatusMultipleChoices
+}
+
+// IsClientError 检查是否是客户端错误
+func (r *Response) IsClientError() bool {
+	return r.StatusCode >= http.StatusBadRequest && r.StatusCode < http.StatusInternalServerError
+}
+
+// IsServerError 检查是否是服务端错误
+func (r *Response) IsServerError() bool {
+	return r.StatusCode >= http.StatusInternalServerError
+}
+
+// Close 关闭客户端（清理资源）
+func (c *Client) Close() error {
+	// HTTP 客户端不需要显式关闭
+	return nil
+}
