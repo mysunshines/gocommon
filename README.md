@@ -297,38 +297,6 @@ func RotateLog(serviceName string) error {
 
 ---
 
-## 日志
-
-```go
-import "common/log"
-
-// 初始化日志（JSON 格式，按天轮转，支持多日志文件）
-log.Init("logs", "info", "user-service")
-
-// 基本输出
-log.Debug("这是一条 debug 日志")
-log.Infof("用户 %d 登录成功", userID)
-log.Warn("磁盘使用率 %.2f%%", 85.5)
-log.Error("数据库连接失败: %v", err)
-
-// 结构化日志（带字段）
-log.WithField("user_id", 1001).Info("用户资料更新")
-log.WithFields(map[string]interface{}{
-    "host":   "10.0.0.1",
-    "port":   3306,
-    "action": "ping",
-}).Error("数据库连接超时")
-
-// 模块子 logger
-authLog := log.WithField("module", "auth")
-authLog.Info("令牌生成成功")
-
-// 自动初始化：直接调用日志方法而无需先 Init（使用默认配置）
-log.Info("hello")  // 自动初始化到 "logs" 目录 + "info" 级别
-```
-
----
-
 ## 常量
 
 ```go

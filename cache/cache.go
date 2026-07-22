@@ -14,11 +14,17 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+const (
+	// cacheInvalidateChannel Redis pub/sub 频道名，用于多实例本地缓存失效通知
+	cacheInvalidateChannel = "cache:local:invalidate"
+)
+
 var (
 	rdb        *redis.Client
 	initOnce   sync.Once
 	sfGroup    singleflight.Group
-	localCache = NewLocalCache(1000, 10*time.Minute)
+	// 多实例安全：TTL 从 10 分钟缩短到 30 秒，配合 Redis pub/sub 主动失效
+	localCache = NewLocalCache(1000, 30*time.Second)
 )
 
 type RedisConfig struct {
@@ -48,6 +54,9 @@ func Init(cfg *config.RedisConfig) error {
 			return
 		}
 
+		// 启动跨实例本地缓存失效监听
+		go startCacheInvalidationListener()
+
 		log.Info("Redis initialized successfully")
 	})
 	return initErr
@@ -70,16 +79,30 @@ func GetKey(key string) string {
 	return cfg.Redis.KeyPrefix + key
 }
 
+// redisReady 返回 Redis 是否已成功初始化，避免未初始化时调用导致空指针 panic。
+func redisReady() bool {
+	return rdb != nil
+}
+
 func Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	if !redisReady() {
+		return fmt.Errorf("redis not initialized")
+	}
 	return rdb.Set(ctx, GetKey(key), value, expiration).Err()
 }
 
 // SetNX 仅当 key 不存在时设置值，返回 true 表示设置成功
 func SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) (bool, error) {
+	if !redisReady() {
+		return false, fmt.Errorf("redis not initialized")
+	}
 	return rdb.SetNX(ctx, GetKey(key), value, expiration).Result()
 }
 
 func Get(ctx context.Context, key string) (string, error) {
+	if !redisReady() {
+		return "", fmt.Errorf("redis not initialized")
+	}
 	return rdb.Get(ctx, GetKey(key)).Result()
 }
 
@@ -96,6 +119,9 @@ func Delete(ctx context.Context, keys ...string) error {
 }
 
 func Exists(ctx context.Context, key string) (bool, error) {
+	if !redisReady() {
+		return false, fmt.Errorf("redis not initialized")
+	}
 	n, err := rdb.Exists(ctx, GetKey(key)).Result()
 	return n > 0, err
 }
@@ -250,11 +276,71 @@ func ZCard(ctx context.Context, key string) (int64, error) {
 	return rdb.ZCard(ctx, GetKey(key)).Result()
 }
 
+// TryLock 尝试获取分布式锁，成功返回 true
+// 用于多实例场景下保证只有一个实例执行关键操作（如数据库迁移）
+func TryLock(ctx context.Context, lockKey string, instanceID string, ttl time.Duration) (bool, error) {
+	return SetNX(ctx, lockKey, instanceID, ttl)
+}
+
+// Unlock 释放分布式锁（通过 Lua 脚本确保原子性：只删除自己持有的锁）
+func Unlock(ctx context.Context, lockKey string, instanceID string) error {
+	if !redisReady() {
+		return fmt.Errorf("redis not initialized")
+	}
+	script := `
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("DEL", KEYS[1])
+		else
+			return 0
+		end`
+	return rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID).Err()
+}
+
+// RenewLock 续期锁（延长 TTL），防止长时间操作导致锁过期
+func RenewLock(ctx context.Context, lockKey string, instanceID string, ttl time.Duration) error {
+	script := `
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("EXPIRE", KEYS[1], ARGV[2])
+		else
+			return 0
+		end`
+	return rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID, int(ttl.Seconds())).Err()
+}
+
 func Close() error {
 	if rdb != nil {
 		return rdb.Close()
 	}
 	return nil
+}
+
+// PublishCacheInvalidation 向所有实例广播本地缓存失效通知
+// 当某实例更新了 Redis 并回写本地缓存后调用，通知其他实例清除对应 key
+func PublishCacheInvalidation(ctx context.Context, key string) {
+	if rdb == nil {
+		return
+	}
+	// 使用带 KeyPrefix 的频道名，避免不同项目冲突
+	channel := GetKey(cacheInvalidateChannel)
+	if err := rdb.Publish(ctx, channel, key).Err(); err != nil {
+		log.Debugf("Failed to publish cache invalidation: %v", err)
+	}
+}
+
+// startCacheInvalidationListener 订阅本地缓存失效频道，收到消息后删除本地缓存
+// 在 Init() 中通过 goroutine 启动，运行期间持续监听
+func startCacheInvalidationListener() {
+	// 每个实例使用独立的消费者组，确保所有实例都能收到消息
+	channel := GetKey(cacheInvalidateChannel)
+	pubsub := rdb.Subscribe(context.Background(), channel)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for msg := range ch {
+		if msg != nil && msg.Payload != "" {
+			localCache.Delete(msg.Payload)
+		}
+	}
 }
 
 type BloomFilter struct {
@@ -355,9 +441,18 @@ func LocalCacheGet(key string) (interface{}, bool) {
 	return localCache.Get(key)
 }
 
-// LocalCacheSet 设置本地缓存
+// LocalCacheSet 设置本地缓存，并广播失效通知给其他实例
 func LocalCacheSet(key string, value interface{}) {
 	localCache.Set(key, value)
+	// 通知其他实例清除该 key 的本地缓存，保证多实例数据一致性
+	PublishCacheInvalidation(context.Background(), key)
+}
+
+// LocalCacheDelete 删除本地缓存，并广播失效通知给其他实例
+func LocalCacheDelete(key string) {
+	localCache.Delete(key)
+	// 通知其他实例清除该 key 的本地缓存，保证多实例数据一致性
+	PublishCacheInvalidation(context.Background(), key)
 }
 
 func (lc *LocalCache) Get(key string) (interface{}, bool) {

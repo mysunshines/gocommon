@@ -227,6 +227,43 @@ func JWTValidMiddleware() gin.HandlerFunc {
 	}
 }
 
+// AdminOnlyMiddleware 仅允许管理员访问。
+// 依赖前置的 JWTValidMiddleware 已将 role 注入 gin.Context（见 RoleContextKey）。
+// JWT 中数字声明默认解析为 float64，这里做类型兼容。
+func AdminOnlyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw, exists := c.Get(RoleContextKey)
+		if !exists {
+			c.JSON(http.StatusForbidden, gin.H{"code": constants.ErrCodeForbidden, "message": "需要管理员权限"})
+			c.Abort()
+			return
+		}
+
+		var role uint8
+		switch v := raw.(type) {
+		case float64:
+			role = uint8(v)
+		case uint8:
+			role = v
+		case int:
+			role = uint8(v)
+		case int64:
+			role = uint8(v)
+		default:
+			c.JSON(http.StatusForbidden, gin.H{"code": constants.ErrCodeForbidden, "message": "无效的角色信息"})
+			c.Abort()
+			return
+		}
+
+		if role != constants.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"code": constants.ErrCodeForbidden, "message": "需要管理员权限"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func GetUserIDFromContext(c *gin.Context) (uint, error) {
 	userID, exists := c.Get(UserIDContextKey)
 	if !exists {
