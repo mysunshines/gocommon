@@ -17,7 +17,7 @@ const (
 )
 
 // Example_main 是一个示例演示 HTTP 客户端的各种用法
-func Example_main() {
+func ExampleNew_main() {
 	ctx := context.Background()
 
 	// 创建带基础URL的HTTP客户端

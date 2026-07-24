@@ -11,7 +11,7 @@ import (
 // 示例 1：并行执行 — 同时查询多个数据源
 // ============================================================================
 
-func ExampleParallel() {
+func ExamplePool_Parallel() {
 	ctx := context.Background()
 
 	// 模拟：同时查询多张表的数据
@@ -51,7 +51,7 @@ func ExampleParallel() {
 // 示例 2：并行执行 + 超时控制
 // ============================================================================
 
-func ExampleParallelWithTimeout() {
+func ExampleNew() {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -80,7 +80,7 @@ func ExampleParallelWithTimeout() {
 // 示例 3：串行执行 — 有依赖的任务必须顺序执行
 // ============================================================================
 
-func ExampleSerial() {
+func ExamplePool_Serial() {
 	ctx := context.Background()
 
 	// 模拟：发文章流程，必须先校验再保存再同步
@@ -153,7 +153,7 @@ func ExampleFuture() {
 // 示例 5：混合执行 — 组间并行，组内串行
 // ============================================================================
 
-func ExampleMixed() {
+func ExamplePool_Mixed() {
 	ctx := context.Background()
 
 	// 场景：发布文章时，需要同时写入 3 张表。
@@ -211,7 +211,7 @@ func ExampleMixed() {
 // 示例 6：自定义并发度（Pool 级别控制）
 // ============================================================================
 
-func ExampleCustomPool() {
+func ExamplePool() {
 	// 创建最大 2 并发的池（适用于内存敏感或下游 QPS 限制场景）
 	p := New(WithMaxWorkers(2))
 	fmt.Printf("pool max workers: %d\n", p.MaxWorkers()) // pool max workers: 2
@@ -241,7 +241,7 @@ func ExampleCustomPool() {
 // 示例 7：便捷函数 — 直接用包级函数，无需管理 Pool
 // ============================================================================
 
-func ExampleConvenienceFuncs() {
+func ExampleGoSerial() {
 	ctx := context.Background()
 
 	// Go 并行 — 等价于 Default().Parallel(ctx, tasks...)
@@ -281,7 +281,7 @@ type Article struct {
 }
 
 // ExampleMicroservice 演示在微服务中聚合多个下游服务数据。
-func ExampleMicroservice() {
+func ExampleGoMixed() {
 	ctx := context.Background()
 
 	// 同时向 3 个微服务发起请求
