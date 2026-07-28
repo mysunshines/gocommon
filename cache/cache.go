@@ -23,6 +23,9 @@ var (
 	rdb        *redis.Client
 	initOnce   sync.Once
 	sfGroup    singleflight.Group
+	// keyPrefix 在 Init 时从配置写入，避免 GetKey 依赖 gocommon 全局配置
+	// （各服务用各自的 internal/config 加载，gocommon 的 config.Get() 可能为 nil）
+	keyPrefix  string
 	// 多实例安全：TTL 从 10 分钟缩短到 30 秒，配合 Redis pub/sub 主动失效
 	localCache = NewLocalCache(1000, 30*time.Second)
 )
@@ -39,6 +42,7 @@ type RedisConfig struct {
 func Init(cfg *config.RedisConfig) error {
 	var initErr error
 	initOnce.Do(func() {
+		keyPrefix = cfg.KeyPrefix
 		rdb = redis.NewClient(&redis.Options{
 			Addr:     cfg.Addr(),
 			Password: cfg.Password,
@@ -75,8 +79,7 @@ func Ping(ctx context.Context) error {
 }
 
 func GetKey(key string) string {
-	cfg := config.Get()
-	return cfg.Redis.KeyPrefix + key
+	return keyPrefix + key
 }
 
 // redisReady 返回 Redis 是否已成功初始化，避免未初始化时调用导致空指针 panic。
