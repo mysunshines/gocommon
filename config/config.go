@@ -19,6 +19,7 @@ type Config struct {
 	GRPC      GRPCConfig      `yaml:"grpc"`
 	HTTP      HTTPConfig      `yaml:"http"`
 	Consul    ConsulConfig    `yaml:"consul"`
+	Micro     MicroConfig     `yaml:"micro"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 }
@@ -106,6 +107,19 @@ type ConsulConfig struct {
 	Address            string `yaml:"address"`
 	CheckInterval      int    `yaml:"check_interval"`
 	DeregisterCritical int    `yaml:"deregister_critical"`
+}
+
+// MicroConfig 微服务网关配置（服务注册中心）
+type MicroConfig struct {
+	Registry RegistryConfig `yaml:"registry"`
+}
+
+// RegistryConfig 服务注册中心配置
+type RegistryConfig struct {
+	Type    string            `yaml:"type"`
+	Address string            `yaml:"address"`
+	Timeout int               `yaml:"timeout"`
+	Options map[string]string `yaml:"options"`
 }
 
 type MetricsConfig struct {
@@ -207,6 +221,15 @@ func ApplyDefaults(c *Config) {
 	if c.Consul.DeregisterCritical == 0 {
 		c.Consul.DeregisterCritical = 30
 	}
+	if c.Micro.Registry.Type == "" {
+		c.Micro.Registry.Type = "consul"
+	}
+	if c.Micro.Registry.Address == "" {
+		c.Micro.Registry.Address = c.Consul.Address
+	}
+	if c.Micro.Registry.Timeout == 0 {
+		c.Micro.Registry.Timeout = 5
+	}
 	if c.Metrics.Port == 0 {
 		c.Metrics.Port = 9090
 	}
@@ -260,9 +283,11 @@ func ApplyEnvOverrides(c *Config) {
 	// Consul — 优先 CONSUL_ADDRESS，其次 MICRO_REGISTRY_ADDRESS
 	if v := os.Getenv("CONSUL_ADDRESS"); v != "" {
 		c.Consul.Address = v
+		c.Micro.Registry.Address = v
 	} else if v := os.Getenv("MICRO_REGISTRY_ADDRESS"); v != "" {
 		// Docker Compose 中通常用 MICRO_REGISTRY_ADDRESS
 		c.Consul.Address = v
+		c.Micro.Registry.Address = v
 	}
 
 	// gRPC Port — 支持 MICRO_SERVER_ADDRESS 格式 :port
