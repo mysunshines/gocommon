@@ -248,7 +248,7 @@ func ApplyDefaults(c *Config) {
 // Docker Compose 中通过 environment 设置以下变量：
 //
 //	DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
-//	REDIS_HOST / REDIS_PORT
+//	REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
 //	CONSUL_ADDRESS / MICRO_REGISTRY_ADDRESS
 func ApplyEnvOverrides(c *Config) {
 	// Database
@@ -278,6 +278,9 @@ func ApplyEnvOverrides(c *Config) {
 		if port, err := strconv.Atoi(v); err == nil {
 			c.Redis.Port = port
 		}
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		c.Redis.Password = v
 	}
 
 	// Consul — 优先 CONSUL_ADDRESS，其次 MICRO_REGISTRY_ADDRESS
