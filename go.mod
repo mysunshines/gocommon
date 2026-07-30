@@ -12,6 +12,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/twmb/murmur3 v1.1.8
 	github.com/valyala/fasthttp v1.71.0
+	github.com/yuin/goldmark v1.4.13
 	golang.org/x/crypto v0.48.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/time v0.15.0
