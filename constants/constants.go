@@ -187,6 +187,16 @@ const (
 	UserServiceV1Alias = "user.v1"
 	// UserServiceV1Service 用户服务 v1 的真实 proto 全限定服务名
 	UserServiceV1Service = "user.v1.UserService"
+
+	// ArticleServiceV1Alias 文章服务 v1 的调用侧逻辑名（SendRequest api 前缀）
+	ArticleServiceV1Alias = "article.v1"
+	// ArticleServiceV1Service 文章服务 v1 的真实 proto 全限定服务名
+	ArticleServiceV1Service = "article.v1.ArticleService"
+
+	// CommentServiceV1Alias 评论服务 v1 的调用侧逻辑名（SendRequest api 前缀）
+	CommentServiceV1Alias = "comment.v1"
+	// CommentServiceV1Service 评论服务 v1 的真实 proto 全限定服务名
+	CommentServiceV1Service = "comment.v1.CommentService"
 )
 
 // ============================================================================
