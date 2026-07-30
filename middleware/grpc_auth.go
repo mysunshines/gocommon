@@ -17,6 +17,7 @@ const (
 	grpcUserIDKey   grpcCtxKey = "grpc_user_id"
 	grpcRoleKey     grpcCtxKey = "grpc_role"
 	grpcUsernameKey grpcCtxKey = "grpc_username"
+	grpcTokenKey    grpcCtxKey = "grpc_token"
 )
 
 // GRPCAuthInterceptor 返回 gRPC 一元服务端拦截器，用于补齐 gRPC 层的鉴权：
@@ -74,6 +75,9 @@ func GRPCAuthInterceptor() grpc.UnaryServerInterceptor {
 				ctx = context.WithValue(ctx, grpcUsernameKey, s)
 			}
 		}
+		// 保存原始 token，供服务间调用时由 grpcclient.AuthForwardInterceptor 透传到下游，
+		// 避免 token 随 metadata 链丢失（例如 handler 用 context.Background() 发起下游调用时）。
+		ctx = context.WithValue(ctx, grpcTokenKey, parts[1])
 
 		return handler(ctx, req)
 	}
@@ -96,6 +100,15 @@ func GetGRPCRole(ctx context.Context) (interface{}, bool) {
 func GetGRPCUsername(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(grpcUsernameKey).(string)
 	return v, ok
+}
+
+// GetGRPCToken 从 gRPC context 读取已认证请求的原始 JWT（不含 "Bearer " 前缀）。
+// 供 grpcclient.AuthForwardInterceptor 在服务间调用时透传到下游，
+// 使下游 GRPCAuthInterceptor 能继续校验调用方身份（防越权）。
+// 未携带令牌的请求返回 ("", false)。
+func GetGRPCToken(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(grpcTokenKey).(string)
+	return v, ok && v != ""
 }
 
 // RequireGRPCAuth 便捷方法：要求已登录，否则返回 Unauthenticated。
