@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -150,11 +151,28 @@ func RecoveryMiddleware() gin.HandlerFunc {
 	}
 }
 
+// csrfHeader 是 CSRF 防护使用的请求头名称，前后端约定一致。
+const csrfHeader = "X-CSRF-Token"
+
+// CORSMiddleware 跨域中间件。
+// 允许的来源通过环境变量 CORS_ALLOW_ORIGINS 配置（逗号分隔，支持 "*" 通配）。
+// 未配置时（默认）仅允许同源，不对外暴露跨域，避免 API 被任意站点调用。
+// 重要：Bearer 鉴权不依赖 Cookie，因此不再设置 Access-Control-Allow-Credentials，
+// 消除原先 "* + credentials" 这一违规且危险的配置。
 func CORSMiddleware() gin.HandlerFunc {
+	allowed := parseAllowedOrigins(os.Getenv("CORS_ALLOW_ORIGINS"))
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, X-CSRF-Token")
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			if isOriginAllowed(origin, allowed) {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				c.Writer.Header().Set("Vary", "Origin")
+			}
+			// 不在白名单：不设置 Allow-Origin，浏览器将拒绝跨域读取响应
+		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Headers",
+			"Origin, Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, "+csrfHeader)
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
 		c.Writer.Header().Set("Access-Control-Max-Age", constants.CORSMaxAge)
@@ -166,6 +184,101 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// CSRFMiddleware 防止跨站请求伪造（CSRF）。
+// 机制（双重提交变体，与 Bearer 鉴权正交）：
+//   - 登录/注册时服务端在 JWT 中写入 csrf 声明，并在登录响应下发该 token（见 SuccessLogin）；
+//   - 前端对“已登录用户的状态变更请求”（非安全方法且带 Authorization）通过 X-CSRF-Token 头回传；
+//   - 本中间件自行解析 JWT 取出 csrf 声明，与请求头比对，不一致/缺失则拒绝（403）。
+//
+// 对未带 Authorization 的公开写接口（注册、发验证码等）不强制校验，
+// 其防护由邮箱验证码、频率限制等承担。
+// 本中间件会在 JWTValidMiddleware 之前执行并自行解析一次 JWT；解析失败仅放行，
+// 交由后续 JWTValidMiddleware 返回 401，避免重复拒绝。
+func CSRFMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		// 安全方法（只读）不受 CSRF 约束
+		if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+			c.Next()
+			return
+		}
+
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			// 未登录：公开写接口，不强制 CSRF 校验
+			c.Next()
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 {
+			c.Next()
+			return
+		}
+
+		claims, err := parseJWTClaims(parts[1])
+		if err != nil {
+			// JWT 无效：放行，交由 JWTValidMiddleware 返回 401
+			c.Next()
+			return
+		}
+
+		expected, _ := claims["csrf"].(string)
+		actual := c.GetHeader(csrfHeader)
+		if expected == "" || actual == "" || expected != actual {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":    constants.ErrCodeForbidden,
+				"message": "CSRF token 校验失败",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func parseAllowedOrigins(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func isOriginAllowed(origin string, allowed []string) bool {
+	for _, a := range allowed {
+		if a == "*" || a == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func parseJWTClaims(tokenString string) (jwt.MapClaims, error) {
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(jwtSecret), nil
+	})
+	if err != nil || !token.Valid {
+		return nil, err
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, jwt.ErrTokenInvalidClaims
+	}
+	return claims, nil
 }
 
 func JWTValidMiddleware() gin.HandlerFunc {
