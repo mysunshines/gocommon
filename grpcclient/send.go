@@ -19,10 +19,13 @@ type serviceEntry struct {
 	Target string
 }
 
-// serviceRegistry 逻辑服务名(alias) -> serviceEntry。
+// serviceRegistry 服务查找键 -> serviceEntry。
 // 调用方在启动时通过 RegisterService 写入其下游依赖；SendRequest 据此解析目标。
-// 约定：注册键即 SendRequest 的 api 中 "alias.method" 的 alias 部分（建议取
-// 与 HTTP API 一致的版本化逻辑名，如 "user.v1"），再单独声明真实 proto 服务名。
+// 同一个下游会以两个键写入，两种调用风格因此都能命中同一项：
+//   - 逻辑名(alias)，如 "user.v1"，对应 api "user.v1.IsInBlacklist"；
+//   - proto 全限定服务名，如 "user.v1.UserService"，对应下游 pb 生成的
+//     xxx_FullMethodName 常量（"/user.v1.UserService/IsInBlacklist"）。
+//
 // 例如 grpcclient.RegisterService("user.v1", "user.v1.UserService", "user-service:9002")。
 var serviceRegistry sync.Map // map[string]*serviceEntry
 
@@ -31,12 +34,22 @@ var serviceResolver func(name string) (*serviceEntry, bool)
 
 // RegisterService 注册逻辑服务名到 gRPC 目标地址，并声明其 proto 全限定服务名。
 //   - alias：调用侧 api 使用的逻辑名，形如 "user.v1"，与 HTTP API 版本化风格保持一致；
-//   - service：proto 全限定服务名（包名.服务名），如 "user.UserService"，用于构造 gRPC 全方法名；
+//   - service：proto 全限定服务名（包名.服务名），如 "user.v1.UserService"，用于构造 gRPC 全方法名；
 //   - target：gRPC 目标地址（host:port）。
 //
-// 调用侧随后即可使用 grpcclient.SendRequest(ctx, "user.v1.IsInBlacklist", req, resp)。
+// 注册后两种调用风格等价，均命中同一项：
+//
+//	grpcclient.SendRequest(ctx, user.UserService_IsInBlacklist_FullMethodName, req, resp) // 推荐
+//	grpcclient.SendRequest(ctx, "user.v1.IsInBlacklist", req, resp)
 func RegisterService(alias, service, target string) {
-	serviceRegistry.Store(alias, &serviceEntry{Service: service, Target: target})
+	entry := &serviceEntry{Service: service, Target: target}
+	serviceRegistry.Store(alias, entry)
+	// 同时以 proto 全限定服务名为键注册，使调用侧可直接传入下游 pb 生成的
+	// xxx_FullMethodName 常量（形如 "/user.v1.UserService/IsInBlacklist"），
+	// 避免手写字符串拼接方法名。
+	if service != "" && service != alias {
+		serviceRegistry.Store(service, entry)
+	}
 }
 
 // SetServiceResolver 设置自定义服务解析器，覆盖默认注册表（用于对接 Consul 等服务发现）。
@@ -66,13 +79,15 @@ func getConn(target string) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// SendRequest 根据 api 解析服务与方法并发起 gRPC 一元调用。api 推荐使用与 HTTP API
-// 一致的版本化逻辑名（点号风格），格式为 "<alias>.<Method>"，例如：
+// SendRequest 根据 api 解析服务与方法并发起 gRPC 一元调用。
 //
-//	"user.v1.IsInBlacklist"
+// api 推荐直接使用下游服务 pb 生成的全方法名常量，由 proto 定义单一来源产出，
+// 方法改名或包名变更时编译期即可暴露，无需手写字符串：
 //
-// 也兼容旧式 "<Service>/<Method>"（如 "user.UserService/IsInBlacklist"），其中 Service
-// 为 proto 全限定服务名。两种写法最终都映射为 gRPC 全方法名 "/<protoService>/<Method>"。
+//	user.UserService_IsInBlacklist_FullMethodName // "/user.v1.UserService/IsInBlacklist"
+//
+// 同时兼容点号风格 "<alias>.<Method>"（如 "user.v1.IsInBlacklist"），适用于调用侧
+// 不便引入下游 pb 包的场景。两种写法最终都映射为 gRPC 全方法名 "/<protoService>/<Method>"。
 //
 // 相比为每个下游生成强类型客户端，本函数统一了连接管理与鉴权透传：
 //
@@ -83,9 +98,9 @@ func getConn(target string) (*grpc.ClientConn, error) {
 //
 // 典型用法：
 //
-//	grpcclient.RegisterService("user.v1", "user.v1.UserService", cfg.UserService.Addr())
+//	grpcclient.RegisterService(constants.UserServiceV1Alias, constants.UserServiceV1Service, cfg.UserService.Addr())
 //	var resp user.IsBlacklistResponse
-//	err := grpcclient.SendRequest(ctx, "user.v1.IsInBlacklist",
+//	err := grpcclient.SendRequest(ctx, user.UserService_IsInBlacklist_FullMethodName,
 //	    &user.IsBlacklistRequest{UserId: 1, TargetUserId: 2}, &resp)
 //
 // 注意：api 的 alias 在注册时须绑定到真实的 proto 全限定服务名（含包名），这样
