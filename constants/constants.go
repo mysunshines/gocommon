@@ -167,6 +167,29 @@ const (
 )
 
 // ============================================================================
+// 下游服务 gRPC API 标识（调用侧）
+//
+// 微服务之间通过 grpcclient.SendRequest(api, ...) 动态调用时，api 格式为
+// "<逻辑名>.<Method>"，例如 "user.v1.IsInBlacklist"。逻辑名(alias)需先通过
+// grpcclient.RegisterService(alias, protoService, target) 绑定到真实 proto
+// 全限定服务名与地址。
+//
+// 逻辑名带版本号（user.v1），与 HTTP API 的 /api/v1 风格一致；当同一下游同时提供
+// v1、v2 时，分别用不同逻辑名注册即可，SendRequest 用对应前缀选择版本：
+//
+//	grpcclient.RegisterService(constants.UserServiceV1Alias, constants.UserServiceV1Service, addr)
+//	grpcclient.RegisterService(constants.UserServiceV2Alias, constants.UserServiceV2Service, addr) // 同地址或不同部署均可
+//	grpcclient.SendRequest(ctx, constants.UserServiceV1Alias+".IsInBlacklist", ...)
+//	grpcclient.SendRequest(ctx, constants.UserServiceV2Alias+".SomeNewMethod", ...)
+// ============================================================================
+const (
+	// UserServiceV1Alias 用户服务 v1 的调用侧逻辑名（SendRequest api 前缀）
+	UserServiceV1Alias = "user.v1"
+	// UserServiceV1Service 用户服务 v1 的真实 proto 全限定服务名
+	UserServiceV1Service = "user.v1.UserService"
+)
+
+// ============================================================================
 // 统一错误码区间分配
 //
 //   10000-19999  通用/网关错误

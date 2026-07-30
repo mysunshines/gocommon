@@ -23,7 +23,7 @@ type serviceEntry struct {
 // 调用方在启动时通过 RegisterService 写入其下游依赖；SendRequest 据此解析目标。
 // 约定：注册键即 SendRequest 的 api 中 "alias.method" 的 alias 部分（建议取
 // 与 HTTP API 一致的版本化逻辑名，如 "user.v1"），再单独声明真实 proto 服务名。
-// 例如 grpcclient.RegisterService("user.v1", "user.UserService", "user-service:9002")。
+// 例如 grpcclient.RegisterService("user.v1", "user.v1.UserService", "user-service:9002")。
 var serviceRegistry sync.Map // map[string]*serviceEntry
 
 // serviceResolver 自定义服务解析器（可选），覆盖默认注册表，例如对接 Consul 健康查询。
@@ -83,7 +83,7 @@ func getConn(target string) (*grpc.ClientConn, error) {
 //
 // 典型用法：
 //
-//	grpcclient.RegisterService("user.v1", "user.UserService", cfg.UserService.Addr())
+//	grpcclient.RegisterService("user.v1", "user.v1.UserService", cfg.UserService.Addr())
 //	var resp user.IsBlacklistResponse
 //	err := grpcclient.SendRequest(ctx, "user.v1.IsInBlacklist",
 //	    &user.IsBlacklistRequest{UserId: 1, TargetUserId: 2}, &resp)
