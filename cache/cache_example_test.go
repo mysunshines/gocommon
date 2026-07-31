@@ -115,7 +115,7 @@ func ExampleSingleFlightDo() {
 
 	result, err := SingleFlightDo(key, func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
-		data := fmt.Sprintf(`{"title":"Hello","content":"..."}`)
+		data := `{"title":"Hello","content":"..."}`
 		Set(ctx, key, data, 5*time.Minute)
 		return data, nil
 	})

@@ -92,8 +92,8 @@ func GetGRPCUserID(ctx context.Context) (uint, bool) {
 
 // GetGRPCRole 从 gRPC context 读取角色。
 func GetGRPCRole(ctx context.Context) (interface{}, bool) {
-	v, ok := ctx.Value(grpcRoleKey).(interface{})
-	return v, ok
+	v := ctx.Value(grpcRoleKey)
+	return v, v != nil
 }
 
 // GetGRPCUsername 从 gRPC context 读取用户名。
