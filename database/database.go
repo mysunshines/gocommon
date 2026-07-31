@@ -20,15 +20,16 @@ var (
 	once sync.Once
 )
 
+// Config 数据库配置
 type Config struct {
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	DBName       string
-	MaxOpenConns int
-	MaxIdleConns int
-	MaxLifeTime  int
+	Host         string // 数据库主机
+	Port         int    // 数据库端口
+	User         string // 用户名
+	Password     string // 密码
+	DBName       string // 数据库名
+	MaxOpenConns int    // 最大打开连接数
+	MaxIdleConns int    // 最大空闲连接数
+	MaxLifeTime  int    // 连接最大存活时间（秒）
 }
 
 func Init(cfg *config.DatabaseConfig, env string) error {

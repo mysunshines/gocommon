@@ -12,26 +12,26 @@ var cfg *Config
 
 // Config 通用配置结构，各服务通过类型别名复用
 type Config struct {
-	App       AppConfig       `yaml:"app"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Redis     RedisConfig     `yaml:"redis"`
-	JWT       JWTConfig       `yaml:"jwt"`
-	GRPC      GRPCConfig      `yaml:"grpc"`
-	HTTP      HTTPConfig      `yaml:"http"`
-	Consul    ConsulConfig    `yaml:"consul"`
-	Micro     MicroConfig     `yaml:"micro"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	App       AppConfig       `yaml:"app"`        // 应用基础配置（名称/环境/日志/监听）
+	Database  DatabaseConfig  `yaml:"database"`   // 数据库连接配置
+	Redis     RedisConfig     `yaml:"redis"`      // Redis 缓存配置
+	JWT       JWTConfig       `yaml:"jwt"`        // JWT 鉴权配置
+	GRPC      GRPCConfig      `yaml:"grpc"`       // gRPC 监听配置
+	HTTP      HTTPConfig      `yaml:"http"`       // HTTP 监听配置
+	Consul    ConsulConfig    `yaml:"consul"`     // Consul 注册中心配置
+	Micro     MicroConfig     `yaml:"micro"`      // 微服务（注册中心）配置
+	Metrics   MetricsConfig   `yaml:"metrics"`    // Prometheus 指标暴露配置
+	RateLimit RateLimitConfig `yaml:"rate_limit"` // 限流配置
 }
 
 type AppConfig struct {
-	Name      string `yaml:"name"`
-	Env       string `yaml:"env"`
-	LogLevel  string `yaml:"log_level"`
-	LogDir    string `yaml:"log_dir"`
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port"`
-	ServiceID string `yaml:"service_id"`
+	Name      string `yaml:"name"`       // 服务名（用于日志/标识）
+	Env       string `yaml:"env"`        // 运行环境：development / production
+	LogLevel  string `yaml:"log_level"`  // 日志级别：debug/info/warn/error
+	LogDir    string `yaml:"log_dir"`    // 日志目录
+	Host      string `yaml:"host"`       // HTTP 监听主机（默认 0.0.0.0）
+	Port      int    `yaml:"port"`       // HTTP 监听端口
+	ServiceID string `yaml:"service_id"` // 实例唯一 ID（注册用）
 }
 
 // Addr 返回 HTTP 监听地址
@@ -47,15 +47,15 @@ func (a *AppConfig) Addr() string {
 }
 
 type DatabaseConfig struct {
-	Host            string `yaml:"host"`
-	Port            int    `yaml:"port"`
-	User            string `yaml:"user"`
-	Password        string `yaml:"password"`
-	Name            string `yaml:"name"`
-	MaxOpenConns    int    `yaml:"max_open_conns"`
-	MaxIdleConns    int    `yaml:"max_idle_conns"`
-	ConnMaxLifetime int    `yaml:"conn_max_lifetime"`
-	SlowThreshold   int    `yaml:"slow_threshold"`
+	Host            string `yaml:"host"`             // 数据库主机
+	Port            int    `yaml:"port"`             // 数据库端口
+	User            string `yaml:"user"`             // 用户名
+	Password        string `yaml:"password"`         // 密码
+	Name            string `yaml:"name"`             // 数据库名
+	MaxOpenConns    int    `yaml:"max_open_conns"`   // 最大打开连接数
+	MaxIdleConns    int    `yaml:"max_idle_conns"`   // 最大空闲连接数
+	ConnMaxLifetime int    `yaml:"conn_max_lifetime"`// 连接最大存活时间（秒）
+	SlowThreshold   int    `yaml:"slow_threshold"`   // 慢查询阈值（毫秒）
 }
 
 // DSN 返回 MySQL 连接字符串
@@ -65,12 +65,12 @@ func (d *DatabaseConfig) DSN() string {
 }
 
 type RedisConfig struct {
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port"`
-	Password  string `yaml:"password"`
-	DB        int    `yaml:"db"`
-	PoolSize  int    `yaml:"pool_size"`
-	KeyPrefix string `yaml:"key_prefix"`
+	Host      string `yaml:"host"`       // Redis 主机
+	Port      int    `yaml:"port"`       // Redis 端口
+	Password  string `yaml:"password"`   // 密码（无则空）
+	DB        int    `yaml:"db"`         // 逻辑库编号
+	PoolSize  int    `yaml:"pool_size"`  // 连接池大小
+	KeyPrefix string `yaml:"key_prefix"` // 键前缀（避免多服务键冲突）
 }
 
 // Addr 返回 Redis 地址
@@ -116,22 +116,22 @@ type MicroConfig struct {
 
 // RegistryConfig 服务注册中心配置
 type RegistryConfig struct {
-	Type    string            `yaml:"type"`
-	Address string            `yaml:"address"`
-	Timeout int               `yaml:"timeout"`
-	Options map[string]string `yaml:"options"`
+	Type    string            `yaml:"type"`    // 注册中心类型（如 consul）
+	Address string            `yaml:"address"` // 注册中心地址 host:port
+	Timeout int               `yaml:"timeout"` // 注册/发现超时（秒）
+	Options map[string]string `yaml:"options"` // 扩展选项
 }
 
 type MetricsConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Port    int    `yaml:"port"`
-	Path    string `yaml:"path"`
+	Enabled bool   `yaml:"enabled"` // 是否启用指标暴露
+	Port    int    `yaml:"port"`    // 指标 HTTP 端口
+	Path    string `yaml:"path"`    // 指标路径（默认 /metrics）
 }
 
 type RateLimitConfig struct {
-	Enabled bool `yaml:"enabled"`
-	QPS     int  `yaml:"qps"`
-	Burst   int  `yaml:"burst"`
+	Enabled bool `yaml:"enabled"` // 是否启用限流
+	QPS     int  `yaml:"qps"`     // 每秒允许请求数（速率）
+	Burst   int  `yaml:"burst"`   // 突发容量（瞬时最大放行数）
 }
 
 // Load 加载配置文件

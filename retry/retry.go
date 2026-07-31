@@ -11,7 +11,7 @@ import (
 
 // PermanentError 包装一个不可重试的错误，一旦返回即停止重试。
 type PermanentError struct {
-	Err error
+	Err error // 被包裹的原始错误，标记该错误为终态、不应重试
 }
 
 func (p *PermanentError) Error() string { return p.Err.Error() }

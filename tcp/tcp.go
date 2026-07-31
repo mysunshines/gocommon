@@ -14,12 +14,12 @@ import (
 
 // Client TCP 客户端
 type Client struct {
-	address      string
-	conn         net.Conn
-	connMu       sync.RWMutex
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	keepAlive    bool
+	address      string        // 远端地址 host:port
+	conn         net.Conn      // TCP 连接
+	connMu       sync.RWMutex  // 保护 conn 的并发读写
+	readTimeout  time.Duration // 读超时（0 表示不限）
+	writeTimeout time.Duration // 写超时（0 表示不限）
+	keepAlive    bool          // 是否启用 TCP KeepAlive
 }
 
 // Config 连接配置

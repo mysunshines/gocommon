@@ -22,14 +22,14 @@ type Image struct {
 
 // Message 表示一封待发送邮件。
 type Message struct {
-	From     string
-	FromName string
-	To       []string
-	Cc       []string
-	Subject  string
-	TextBody string
-	HTMLBody string
-	Images   []Image
+	From     string   // 发件地址（为空则用 Config.From）
+	FromName string   // 发件人显示名
+	To       []string // 收件人地址列表
+	Cc       []string // 抄送地址列表
+	Subject  string   // 邮件主题
+	TextBody string   // 纯文本正文
+	HTMLBody string   // HTML 正文
+	Images   []Image  // 内联图片列表（HTML 中以 cid 引用）
 }
 
 // Config 邮件服务器配置。

@@ -18,27 +18,27 @@ import (
 
 // Sample 表示一个时间点上的采样值。
 type Sample struct {
-	Timestamp time.Time
-	Value     float64
+	Timestamp time.Time // 采样时刻
+	Value     float64   // 采样数值
 }
 
 // Series 表示一条时间序列（矩阵为多点，向量为单点）。
 type Series struct {
-	Metric  map[string]string
-	Samples []Sample // 区间查询结果（matrix）
-	Value   *Sample  // 即时查询结果（vector）
+	Metric  map[string]string // 标签集合（如 {instance, job}），用于区分不同序列
+	Samples []Sample          // 区间查询结果（matrix），含多个时间点
+	Value   *Sample           // 即时查询结果（vector），仅单点
 }
 
 // QueryResult 是查询响应的统一结构。
 type QueryResult struct {
-	ResultType string
-	Series     []Series
+	ResultType string   // 结果类型："matrix"（区间）或 "vector"（即时）
+	Series     []Series // 查询结果的时间序列列表
 }
 
 // Client 是 Prometheus HTTP API 客户端。
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL string       // Prometheus 基础地址，如 http://prometheus:9090
+	http    *http.Client // 底层 HTTP 客户端
 }
 
 // New 创建客户端。baseURL 形如 http://prometheus:9090。
@@ -113,22 +113,22 @@ func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, err
 }
 
 type apiResponse struct {
-	Status string `json:"status"`
-	Error  string `json:"error"`
+	Status string `json:"status"` // 查询状态："success" / "error"
+	Error  string `json:"error"`  // 失败时的错误信息
 	Data   struct {
-		ResultType string          `json:"resultType"`
-		Result     json.RawMessage `json:"result"`
+		ResultType string          `json:"resultType"` // 结果类型
+		Result     json.RawMessage `json:"result"`     // 原始结果（matrix/vector），延迟解析
 	} `json:"data"`
 }
 
 type rawMatrix struct {
-	Metric map[string]string  `json:"metric"`
-	Values [][2]interface{}   `json:"values"`
+	Metric map[string]string `json:"metric"` // 标签集合
+	Values [][2]interface{}  `json:"values"` // [时间戳, 字符串数值] 序列
 }
 
 type rawVector struct {
-	Metric map[string]string `json:"metric"`
-	Value  [2]interface{}    `json:"value"`
+	Metric map[string]string `json:"metric"` // 标签集合
+	Value  [2]interface{}    `json:"value"`  // [时间戳, 字符串数值]，单点
 }
 
 func parseResponse(body []byte, isRange bool) (*QueryResult, error) {

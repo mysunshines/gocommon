@@ -31,12 +31,12 @@ var (
 )
 
 type RedisConfig struct {
-	Host      string
-	Port      int
-	Password  string
-	DB        int
-	PoolSize  int
-	KeyPrefix string
+	Host      string // Redis 主机
+	Port      int    // Redis 端口
+	Password  string // 密码（无则空）
+	DB        int    // 逻辑库编号
+	PoolSize  int    // 连接池大小
+	KeyPrefix string // 键前缀（避免多服务键冲突）
 }
 
 func Init(cfg *config.RedisConfig) error {
@@ -347,9 +347,9 @@ func startCacheInvalidationListener() {
 }
 
 type BloomFilter struct {
-	key    string
-	size   uint64
-	hashes uint64
+	key    string // Redis 中位数组键名（已带 KeyPrefix）
+	size   uint64 // 位数组大小（bit 数）
+	hashes uint64 // 哈希函数个数
 }
 
 func NewBloomFilter(key string, size, hashes uint64) *BloomFilter {
@@ -396,16 +396,16 @@ func SingleFlightDoChan(key string, fn func() (interface{}, error)) <-chan singl
 }
 
 type LocalCache struct {
-	data      map[string]*cacheItem
-	mu        sync.RWMutex
-	maxSize   int
-	expire    time.Duration
-	cleanupCh chan struct{}
+	data      map[string]*cacheItem // 缓存键值存储
+	mu        sync.RWMutex          // 保护 data 的并发读写
+	maxSize   int                   // 最大缓存条目数（超出按 FIFO 淘汰）
+	expire    time.Duration         // 条目默认过期时间
+	cleanupCh chan struct{}         // 关闭信号，用于停止后台清理 goroutine
 }
 
 type cacheItem struct {
-	value      interface{}
-	expireTime time.Time
+	value      interface{} // 缓存值
+	expireTime time.Time   // 过期时间（绝对时间）
 }
 
 func NewLocalCache(maxSize int, expire time.Duration) *LocalCache {

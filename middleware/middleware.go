@@ -21,10 +21,15 @@ import (
 )
 
 type RateLimiter struct {
+	// limiters 按 key（通常为客户端 IP）缓存各自的令牌桶限流器。
+	// 每个 key 独立限流，首次访问时惰性创建（见 GetLimiter）。
 	limiters map[string]*rate.Limiter
-	mu       sync.RWMutex
-	rps      rate.Limit
-	burst    int
+	// mu 保护对 limiters map 的并发读写（新建/查询限流器时会加锁）。
+	mu sync.RWMutex
+	// rps 新建限流器时使用的速率（每秒允许的平均请求数，rate.Limit 即 float64）。
+	rps rate.Limit
+	// burst 新建限流器时允许的突发容量（令牌桶可积攒的最大令牌数，即瞬时最大放行请求数）。
+	burst int
 }
 
 func NewRateLimiter(rps int, burst int) *RateLimiter {

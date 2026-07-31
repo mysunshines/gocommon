@@ -93,6 +93,13 @@ func Register(r Registration) (func() error, error) {
 		"Address": addr,
 		"Port":    port,
 		"Check":   check,
+		// 把 gRPC 与 HTTP 端口都写入 Meta，使 Consul 成为端口信息的唯一事实源。
+		// 网关（如 /admin-api/ 透传）据此动态解析下游 HTTP 端口，无需在 nginx 或
+		// 网关配置中写死 article-service 的 8082 等端口号。
+		"Meta": map[string]string{
+			"grpc_port": fmt.Sprintf("%d", r.GRPCPort),
+			"http_port": fmt.Sprintf("%d", r.HTTPPort),
+		},
 	}
 
 	payload, err := json.Marshal(body)

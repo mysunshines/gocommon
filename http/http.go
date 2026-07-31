@@ -16,11 +16,11 @@ import (
 
 // Client HTTP 客户端
 type Client struct {
-	client     *http.Client
-	baseURL    string
-	timeout    time.Duration
-	headers    map[string]string
-	middleware []Middleware
+	client     *http.Client      // 底层标准库 HTTP 客户端
+	baseURL    string            // 基础 URL，拼接到各请求路径前
+	timeout    time.Duration     // 请求超时
+	headers    map[string]string // 默认请求头（单次请求可覆盖）
+	middleware []Middleware      // 请求发出前执行的中间件链
 }
 
 // Middleware HTTP 中间件
@@ -28,12 +28,12 @@ type Middleware func(*http.Request) error
 
 // Config 客户端配置
 type Config struct {
-	BaseURL   string
-	Timeout   time.Duration
-	Headers   map[string]string
-	MaxIdle   int
-	MaxConns  int
-	KeepAlive time.Duration
+	BaseURL   string        // 基础 URL
+	Timeout   time.Duration // 超时时间
+	Headers   map[string]string // 默认请求头
+	MaxIdle   int           // 最大空闲连接数
+	MaxConns  int           // 最大连接数
+	KeepAlive time.Duration // 连接保活时间
 }
 
 // Option 配置选项
@@ -96,9 +96,9 @@ func WithMiddleware(m Middleware) Option {
 
 // Response HTTP 响应
 type Response struct {
-	StatusCode int
-	Headers    http.Header
-	Body       []byte
+	StatusCode int         // HTTP 状态码
+	Headers    http.Header // 响应头
+	Body       []byte      // 响应体原始字节
 }
 
 // buildURL 构建完整 URL

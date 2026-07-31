@@ -12,13 +12,13 @@ import (
 
 // Client UDP 客户端
 type Client struct {
-	address      string
-	localAddr    *net.UDPAddr
-	conn         *net.UDPConn
-	connMu       sync.RWMutex
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	bufSize      int
+	address      string        // 远端地址 host:port
+	localAddr    *net.UDPAddr  // 本地绑定地址（nil 表示由系统分配）
+	conn         *net.UDPConn  // UDP 连接
+	connMu       sync.RWMutex  // 保护 conn 的并发读写
+	readTimeout  time.Duration // 读超时（0 表示不限）
+	writeTimeout time.Duration // 写超时（0 表示不限）
+	bufSize      int           // 接收缓冲大小
 }
 
 // Config 连接配置

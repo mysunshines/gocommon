@@ -24,11 +24,11 @@ import (
 
 // FastClient 基于 fasthttp 的 HTTP 客户端
 type FastClient struct {
-	client     *fasthttp.Client
-	baseURL    string
-	timeout    time.Duration
-	headers    map[string]string
-	middleware []FastMiddleware
+	client     *fasthttp.Client  // 底层 fasthttp 客户端
+	baseURL    string            // 基础 URL，拼接到各请求路径前
+	timeout    time.Duration     // 请求超时
+	headers    map[string]string // 默认请求头（单次请求可覆盖）
+	middleware []FastMiddleware  // 请求发出前执行的中间件链
 }
 
 // FastMiddleware fasthttp 中间件

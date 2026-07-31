@@ -20,18 +20,18 @@ type Client struct {
 	apiKey   string // 服务账号 Token（优先于 basic auth）
 	user     string // basic auth 用户名（apiKey 为空时使用）
 	password string // basic auth 密码
-	orgID    int
-	http     *http.Client
+	orgID    int    // 组织 ID（默认 1）
+	http     *http.Client // 底层 HTTP 客户端
 }
 
 // Options 客户端构造参数。
 type Options struct {
-	BaseURL  string
-	APIKey   string
-	User     string
-	Password string
-	OrgID    int
-	Timeout  time.Duration
+	BaseURL  string        // 基础地址，如 http://grafana:3000
+	APIKey   string        // 服务账号 Token（优先于 basic auth）
+	User     string        // basic auth 用户名
+	Password string        // basic auth 密码
+	OrgID    int           // 组织 ID（默认 1）
+	Timeout  time.Duration // 请求超时（默认 30s）
 }
 
 // New 创建 Grafana 渲染客户端。
