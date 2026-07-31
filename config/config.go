@@ -152,6 +152,37 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
+// ResolveConfigPath 根据环境变量决定配置文件路径
+// 优先级：CONFIG_PATH（显式指定）> config/config_<APP_ENV>.yaml > config/config.yaml（默认）
+// 示例：
+//   - APP_ENV=test       → config/config_test.yaml
+//   - APP_ENV=production  → config/config_production.yaml
+//   - 均未设或development  → config/config.yaml（向后兼容本地开发）
+func ResolveConfigPath() string {
+	// 1. 显式 CONFIG_PATH 环境变量（最高优先级）
+	if p := os.Getenv("CONFIG_PATH"); p != "" {
+		return p
+	}
+	// 2. 根据 APP_ENV 构造：config/config_test.yaml / config/config_production.yaml
+	env := os.Getenv("APP_ENV")
+	if env == "" || env == "development" {
+		return "config/config.yaml"
+	}
+	return fmt.Sprintf("config/config_%s.yaml", env)
+}
+
+// LoadByEnv 根据 APP_ENV 环境变量加载对应环境的配置文件
+// 等价于 Load(ResolveConfigPath())，同时自动调用 ApplyEnvOverrides
+func LoadByEnv() (*Config, error) {
+	path := ResolveConfigPath()
+	c, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	ApplyEnvOverrides(c)
+	return c, nil
+}
+
 // Get 获取全局配置
 func Get() *Config {
 	return cfg

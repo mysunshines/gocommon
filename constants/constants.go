@@ -270,7 +270,7 @@ const (
 	DefaultLogLevel = "info"
 
 	// DefaultConfigPath 默认配置文件路径
-	DefaultConfigPath = "config.yaml"
+	DefaultConfigPath = "config/config.yaml"
 
 	// DefaultGRPCPort 默认 gRPC 端口
 	DefaultGRPCPort = 9090
@@ -295,11 +295,14 @@ const (
 	// EnvLogDir 日志目录环境变量
 	EnvLogDir = "LOG_DIR"
 
-	// EnvAppEnv 应用运行环境环境变量
+	// EnvAppEnv 应用运行环境环境变量（如 test / production）
 	EnvAppEnv = "APP_ENV"
 
-	// EnvConfigPath 配置文件路径环境变量
+	// EnvConfigPath 配置文件路径环境变量（显式指定，优先级最高）
 	EnvConfigPath = "CONFIG_PATH"
+
+	// DefaultEnv 默认运行环境，未设置 APP_ENV 时使用 development
+	DefaultEnv = "development"
 )
 
 // ============================================================================
