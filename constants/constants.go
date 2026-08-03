@@ -45,8 +45,8 @@ const (
 	// MaxHeaderBytes HTTP 请求头最大字节数: 1MB
 	MaxHeaderBytes = 1 << 20
 
-	// MaxRequestBody HTTP 请求体最大字节数: 1MB
-	MaxRequestBody = 1 << 20
+	// MaxRequestBody HTTP 请求体最大字节数: 8MB
+	MaxRequestBody = 8 << 20
 )
 
 // ============================================================================
