@@ -128,8 +128,12 @@ func LoggingMiddleware() gin.HandlerFunc {
 			path = path + "?" + raw
 		}
 
-		log.Infof("[%s] %s %s %d %v %s",
+		// 从 gin.Context 取链路追踪 ID（由前置的 TraceMiddleware 注入），
+		// 取不到时降级为空串，避免日志缺字段。traceID 用于跨服务串联同一请求，方便 debug。
+		traceID, _ := c.Get(constants.HeaderXTraceID)
+		log.Infof("[%s] traceID=%v %s %s %d %v %s",
 			method,
+			traceID,
 			path,
 			clientIP,
 			statusCode,
