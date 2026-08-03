@@ -56,6 +56,19 @@ func (rl *RateLimiter) Allow(key string) bool {
 	return limiter.Allow()
 }
 
+// SetLimit 动态更新限流阈值：既更新后续新建限流器的默认值，也即时刷新
+// 所有已存在的限流器（已缓存的令牌桶），实现阈值热更无需重启。
+func (rl *RateLimiter) SetLimit(rps int, burst int) {
+	rl.mu.Lock()
+	rl.rps = rate.Limit(rps)
+	rl.burst = burst
+	for _, limiter := range rl.limiters {
+		limiter.SetLimit(rl.rps)
+		limiter.SetBurst(rl.burst)
+	}
+	rl.mu.Unlock()
+}
+
 var (
 	rateLimiter *RateLimiter
 	limiterOnce sync.Once
@@ -70,6 +83,18 @@ func InitRateLimiter(cfg *config.RateLimitConfig) {
 			rateLimiter = NewRateLimiter(cfg.QPS, cfg.Burst)
 		}
 	})
+}
+
+// UpdateRateLimiter 动态调整已初始化限流器的阈值（供配置中心热更即时生效）。
+// 仅在 InitRateLimiter 已初始化限流器后有效；若尚未初始化或配置关闭，则忽略。
+func UpdateRateLimiter(cfg *config.RateLimitConfig) {
+	if rateLimiter == nil {
+		return
+	}
+	if !cfg.Enabled {
+		return
+	}
+	rateLimiter.SetLimit(cfg.QPS, cfg.Burst)
 }
 
 func InitJWT(secret string) {

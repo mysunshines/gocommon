@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/time/rate"
 )
 
 func TestNewRateLimiter(t *testing.T) {
@@ -25,6 +26,34 @@ func TestNewRateLimiter(t *testing.T) {
 	l2 := rl.GetLimiter("same")
 	if l1 != l2 {
 		t.Fatal("same key should return the same limiter")
+	}
+}
+
+func TestUpdateRateLimiter(t *testing.T) {
+	// 直接构造并赋值包级限流器（绕过 sync.Once，避免受其他测试的初始化顺序影响），
+	// 验证动态更新阈值后已存在与新建限流器均反映新值。
+	rateLimiter = NewRateLimiter(100, 200)
+	// 先消费一个已存在 key 的 limiter
+	_ = rateLimiter.Allow("existing")
+
+	UpdateRateLimiter(&config.RateLimitConfig{Enabled: true, QPS: 50, Burst: 80})
+	if rateLimiter.rps != rate.Limit(50) || rateLimiter.burst != 80 {
+		t.Fatalf("rps/burst not updated: rps=%v burst=%d", rateLimiter.rps, rateLimiter.burst)
+	}
+	// 已存在的 limiter 应被刷新
+	if got := rateLimiter.limiters["existing"].Burst(); got != 80 {
+		t.Fatalf("existing limiter burst not updated, got %d", got)
+	}
+	// 后续新建的 limiter 应使用新默认值
+	newL := rateLimiter.GetLimiter("fresh")
+	if newL.Limit() != rate.Limit(50) || newL.Burst() != 80 {
+		t.Fatalf("fresh limiter not using new defaults: limit=%v burst=%d", newL.Limit(), newL.Burst())
+	}
+
+	// 传入 Enabled=false 的更新应被忽略，不降级关闭限流
+	UpdateRateLimiter(&config.RateLimitConfig{Enabled: false, QPS: 1, Burst: 1})
+	if rateLimiter.rps != rate.Limit(50) || rateLimiter.burst != 80 {
+		t.Fatalf("disabled update should be ignored: rps=%v burst=%d", rateLimiter.rps, rateLimiter.burst)
 	}
 }
 
@@ -211,4 +240,11 @@ func TestTimeoutMiddleware(t *testing.T) {
 func ExampleNewRateLimiter() {
 	rl := NewRateLimiter(10, 20)
 	_ = rl.Allow("client-ip")
+}
+
+// ExampleUpdateRateLimiter 演示配置中心热更限流阈值时即时刷新限流器。
+func ExampleUpdateRateLimiter() {
+	InitRateLimiter(&config.RateLimitConfig{Enabled: true, QPS: 100, Burst: 200})
+	// 线上通过配置后台把限流阈值下调，无需重启即时生效。
+	UpdateRateLimiter(&config.RateLimitConfig{Enabled: true, QPS: 50, Burst: 80})
 }

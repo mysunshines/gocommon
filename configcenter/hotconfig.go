@@ -72,9 +72,10 @@ func (sc *ServiceConfig) Load() error {
 }
 
 // Watch 先拉取一次当前配置（确保其回写全局 config），再在后台长轮询 Consul KV；
-// 配置变更时即时刷新内存快照并回写全局 config。
-// 阻塞式，应在 goroutine 中调用（如 go sc.Watch()）。
-func (sc *ServiceConfig) Watch() {
+// 配置变更时即时刷新内存快照并回写全局 config，最后调用可选的 onUpdate 回调
+// （如用配置中心下发的限流阈值刷新限流器实例）。
+// 阻塞式，应在 goroutine 中调用（如 go sc.Watch()）。onUpdate 可为空（不传）。
+func (sc *ServiceConfig) Watch(onUpdate ...func(hc *HotConfig)) {
 	// 启动时先拉一次（KV 不存在会返回 ErrNotFound，可忽略），保证初始值即时生效。
 	if err := sc.Load(); err != nil && err != ErrNotFound {
 		log.Warnf("configcenter: initial load failed: %v", err)
@@ -84,6 +85,11 @@ func (sc *ServiceConfig) Watch() {
 	_ = sc.client.Watch(key, &hc, func() {
 		sc.current.Store(&hc)
 		sc.apply(&hc)
+		for _, fn := range onUpdate {
+			if fn != nil {
+				fn(&hc)
+			}
+		}
 	})
 }
 
