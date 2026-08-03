@@ -15,6 +15,7 @@
 package configcenter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,6 +24,11 @@ import (
 
 	"github.com/mysunshines/gocommon/log"
 )
+
+// loadTimeout 是 Load/Get（非阻塞首拉）的最长等待时间。
+// 与 Watch 的 blocking query（wait=10m）不同，首拉不应无限等待，
+// 故单独设定短超时，避免 Consul 不可达时进程长时间卡在启动路径。
+const loadTimeout = 5 * time.Second
 
 // DefaultKVBasePath 是热更配置在 Consul KV 中的根路径。
 // 完整 key 形如：config/<service>/<env>，例如 config/article-service/production。
@@ -53,10 +59,16 @@ type Client struct {
 }
 
 // New 创建一个指向指定 Consul 地址的 Client。
+//
+// 注意：底层 *http.Client 不设置全局 Timeout。因为 Watch 使用 blocking query
+// （?wait=10m），若设了全局 Timeout 会在 10 秒后被强制中断，从而周期性抛出
+// "Client.Timeout exceeded while awaiting headers"。Watch 的请求生命周期改由
+// done 通道（req.Cancel）在 Stop 时中断；而 Load/Get 等非阻塞首拉则通过
+// loadTimeout 单独控制超时（见 get）。
 func New(consulAddress string) *Client {
 	return &Client{
 		address: consulAddress,
-		http:    &http.Client{Timeout: 10 * time.Second},
+		http:    &http.Client{}, // 不设 Timeout，由请求级 context / done 控制
 		done:    make(chan struct{}),
 	}
 }
@@ -105,9 +117,16 @@ func (c *Client) kvPutURL(key string) string {
 }
 
 // get 从 Consul KV 读取 key，返回解码后的 value 与最新 ModifyIndex。
-// 当 key 不存在时返回 ErrNotFound。
+// 当 key 不存在时返回 ErrNotFound。读取受 loadTimeout 限制（非阻塞、短超时），
+// 与 Watch 的阻塞长轮询区分开，避免 Consul 不可达时长时间卡住。
 func (c *Client) get(key string) ([]byte, uint64, error) {
-	resp, err := c.http.Get(c.kvURL(key, "", 0))
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.kvURL(key, "", 0), nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("configcenter: get %s build request: %w", key, err)
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("configcenter: get %s failed: %w", key, err)
 	}
@@ -167,24 +186,33 @@ func (c *Client) Load(key string, out interface{}) error {
 // 阻塞式，应在独立 goroutine 中调用（如 go client.Watch(...)）。
 // 仅当收到 Stop 信号或 Consul 持续不可达时才会退出；偶发网络抖动会被内部重试吸收。
 func (c *Client) Watch(key string, out interface{}, onUpdate func()) error {
-	// 复用底层 *http.Client 的 transport，使 Stop 时能通过关闭连接中断阻塞查询。
-	reqCtx := c.done
 	for {
 		if c.stopped() {
 			return nil
 		}
 		idx := c.currentIndex()
-		req, err := http.NewRequest(http.MethodGet, c.kvURL(key, "10m", idx), nil)
+		// 用可被 done 取消的 context 控制阻塞查询的生命周期：
+		// 不设超时（由 Consul 的 ?wait=10m 控制服务端阻塞），
+		// 仅当 Stop() 时关闭 done 以中断正在进行的阻塞请求。
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			select {
+			case <-c.done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.kvURL(key, "10m", idx), nil)
 		if err != nil {
+			cancel()
 			log.Warnf("configcenter: watch %s build request failed: %v", key, err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		// 将 done 作为请求上下文，Stop 时可中断正在进行的阻塞查询。
-		req.Cancel = reqCtx
 
 		resp, err := c.http.Do(req)
 		if err != nil {
+			cancel()
 			if c.stopped() {
 				return nil
 			}
@@ -197,6 +225,7 @@ func (c *Client) Watch(key string, out interface{}, onUpdate func()) error {
 		newIdx := parseConsulIndex(resp.Header.Get("X-Consul-Index"))
 		status := resp.StatusCode
 		resp.Body.Close()
+		cancel() // 本次请求已结束，释放 context（阻塞查询已被 Consul 返回或已被 Stop 取消）
 
 		if c.stopped() {
 			return nil
