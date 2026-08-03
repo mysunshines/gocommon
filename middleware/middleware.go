@@ -492,11 +492,12 @@ func TraceMiddleware() gin.HandlerFunc {
 			traceID = generateTraceID()
 		}
 		c.Set(constants.HeaderXTraceID, traceID)
-		c.Header(constants.HeaderXTraceID, traceID)
 		// 同时注入 context.Context，方便 MySQL/Redis/gRPC 下游组件通过 GetTraceIDFromContext 获取
 		ctx := context.WithValue(c.Request.Context(), traceIDKey, traceID)
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
+		// 在业务逻辑执行完毕后再写响应头，避免反向代理合并下游 Header 时产生重复
+		c.Header(constants.HeaderXTraceID, traceID)
 	}
 }
 

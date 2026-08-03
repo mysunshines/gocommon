@@ -2,6 +2,7 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -46,7 +47,8 @@ func Init(logDir, logLevel, svcName string) {
 			logFile := filepath.Join(logDir, fmt.Sprintf(constants.LogFileNameFmt, svcName, today))
 			file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, constants.FilePermFile)
 			if err == nil {
-				logger.SetOutput(file)
+				// 同时输出到 stdout 和文件，确保 Docker logs 和文件都有记录
+				logger.SetOutput(io.MultiWriter(os.Stdout, file))
 			}
 		}
 
@@ -148,7 +150,7 @@ func doRotate(today string) error {
 	if err != nil {
 		return err
 	}
-	logger.SetOutput(file)
+	logger.SetOutput(io.MultiWriter(os.Stdout, file))
 	currentDate = today
 	return nil
 }

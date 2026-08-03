@@ -36,9 +36,9 @@ type Config struct {
 func Init(cfg *config.DatabaseConfig, env string) error {
 	var initErr error
 	once.Do(func() {
-		gormLogger := logger.Default
+		gormLogger := logger.Interface(&SlowQueryLogger{LogLevel: logger.Warn})
 		if env == "development" {
-			gormLogger = logger.Default.LogMode(logger.Info)
+			gormLogger = gormLogger.LogMode(logger.Info)
 		}
 
 		var err error
@@ -85,10 +85,14 @@ func GetDBConn() *gorm.DB {
 	return db
 }
 
-type SlowQueryLogger struct{}
+type SlowQueryLogger struct {
+	LogLevel logger.LogLevel // 日志级别过滤
+}
 
 func (s *SlowQueryLogger) LogMode(level logger.LogLevel) logger.Interface {
-	return s
+	newLogger := *s
+	newLogger.LogLevel = level
+	return &newLogger
 }
 
 func (s *SlowQueryLogger) Error(ctx context.Context, _ string, values ...interface{}) {
@@ -99,14 +103,14 @@ func (s *SlowQueryLogger) Error(ctx context.Context, _ string, values ...interfa
 }
 
 func (s *SlowQueryLogger) Info(ctx context.Context, _ string, values ...interface{}) {
-	if len(values) > 0 {
+	if len(values) > 0 && s.LogLevel >= logger.Info {
 		traceID := middleware.GetTraceIDFromContext(ctx)
 		log.Infof("[MySQL] traceID=%v | %v", traceID, values)
 	}
 }
 
 func (s *SlowQueryLogger) Warn(ctx context.Context, _ string, values ...interface{}) {
-	if len(values) > 0 {
+	if len(values) > 0 && s.LogLevel >= logger.Warn {
 		traceID := middleware.GetTraceIDFromContext(ctx)
 		log.Warnf("[MySQL] traceID=%v | %v", traceID, values)
 	}
@@ -116,6 +120,22 @@ func (s *SlowQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() 
 	elapsed := time.Since(begin)
 	sql, rows := fc()
 	traceID := middleware.GetTraceIDFromContext(ctx)
+
+	// 出错时始终记录（不受 LogLevel 过滤），便于通过 traceID 排查
+	if err != nil {
+		log.Errorf("[MySQL] traceID=%v | sql=%s | duration=%v | err=%v",
+			traceID, sql, elapsed, err)
+		return
+	}
+
+	// Info 级别：记录所有 SQL 查询（开发环境）
+	if s.LogLevel >= logger.Info {
+		log.Infof("[MySQL] traceID=%v | sql=%s | duration=%v | rows=%d",
+			traceID, sql, elapsed, rows)
+		return
+	}
+
+	// Warn 级别：只记录 >100ms 的慢查询（生产环境默认）
 	if elapsed > 100*time.Millisecond {
 		metrics.RecordSlowQuery(sql, elapsed)
 		log.Warnf("[MySQL] traceID=%v | sql=%s | duration=%v | rows=%d | slow_query=true",
