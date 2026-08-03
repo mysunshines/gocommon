@@ -5,6 +5,7 @@ import (
 
 	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 )
 
 // HotConfig 是需要线上热更新、从配置后台即时下发的业务配置聚合。
@@ -106,6 +107,9 @@ func (sc *ServiceConfig) apply(hc *HotConfig) {
 		log.SetLevel(hc.LogLevel) // 即时调整运行期日志级别
 	}
 	c.RateLimit = hc.RateLimit
+	// 全局 config 已更新，但已初始化好的限流器实例仍是旧阈值，
+	// 需显式刷新实例级 QPS/Burst，否则热更不会真正生效。
+	middleware.UpdateRateLimiter(&hc.RateLimit)
 	if hc.JWTExpireTime > 0 {
 		c.JWT.ExpireTime = hc.JWTExpireTime
 	}

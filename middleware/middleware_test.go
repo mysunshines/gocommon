@@ -180,19 +180,64 @@ func TestAdminOnlyMiddleware(t *testing.T) {
 
 func TestCORSMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	// 配置允许的来源为 *，模拟开放跨域场景
+	t.Setenv("CORS_ALLOW_ORIGINS", "*")
+
+	r := gin.New()
+	r.Use(CORSMiddleware())
+	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	// 带 Origin 头的请求，CORS 应回显该 origin 并设置 Vary: Origin
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	r.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://example.com" {
+		t.Fatalf("CORS origin not echoed, got %q", got)
+	}
+	if w.Header().Get("Vary") != "Origin" {
+		t.Fatal("CORS Vary header missing")
+	}
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS should return 204, got %d", w.Code)
+	}
+}
+
+func TestCORSMiddlewareNoOrigin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	// 无 Origin 头的同源请求不应设置 Allow-Origin
 	r := gin.New()
 	r.Use(CORSMiddleware())
 	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatal("CORS origin not set")
+	if w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("no Origin should not set Allow-Origin, got %q", w.Header().Get("Access-Control-Allow-Origin"))
 	}
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("OPTIONS should return 204, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET should pass through, got %d", w.Code)
+	}
+}
+
+func TestCORSMiddlewareDisallowedOrigin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CORS_ALLOW_ORIGINS", "https://trusted.com")
+
+	r := gin.New()
+	r.Use(CORSMiddleware())
+	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://evil.com")
+	r.ServeHTTP(w, req)
+
+	if w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("disallowed origin should not set Allow-Origin, got %q", w.Header().Get("Access-Control-Allow-Origin"))
 	}
 }
 
