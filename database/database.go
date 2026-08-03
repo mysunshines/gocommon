@@ -45,6 +45,8 @@ func Init(cfg *config.DatabaseConfig, env string) error {
 		var err error
 		db, err = gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
 			Logger: gormLogger,
+			// 不使用数据库外键约束，关联关系在代码层（service/repository）约束。
+			DisableForeignKeyConstraintWhenMigrating: true,
 			NowFunc: func() time.Time {
 				return time.Now().Local()
 			},
