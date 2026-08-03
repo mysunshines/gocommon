@@ -75,6 +75,9 @@ const (
 const (
 	// APIPathPrefix API 版本化路径前缀
 	APIPathPrefix = "/api/v1"
+
+	// HealthCheckPath 健康检查路径，Docker/Consul 探活统一使用
+	HealthCheckPath = "/health"
 )
 
 // ============================================================================

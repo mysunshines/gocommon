@@ -123,6 +123,7 @@ func LoggingMiddleware() gin.HandlerFunc {
 		clientIP := c.ClientIP()
 		method := c.Request.Method
 		statusCode := c.Writer.Status()
+		timestamp := time.Now().Format(constants.DateTimeFormat)
 
 		if raw != "" {
 			path = path + "?" + raw
@@ -131,13 +132,30 @@ func LoggingMiddleware() gin.HandlerFunc {
 		// 从 gin.Context 取链路追踪 ID（由前置的 TraceMiddleware 注入），
 		// 取不到时降级为空串，避免日志缺字段。traceID 用于跨服务串联同一请求，方便 debug。
 		traceID, _ := c.Get(constants.HeaderXTraceID)
-		log.Infof("[%s] traceID=%v %s %s %d %v %s",
+
+		// 从 gin.Context 取 userId（由前置的 JWTValidMiddleware 注入），
+		// 未登录接口取不到时降级为 "-"，避免日志缺字段。
+		userID, _ := GetUserIDFromContext(c)
+		userIDStr := "-"
+		if userID != 0 {
+			userIDStr = strconv.FormatUint(uint64(userID), 10)
+		}
+
+		// 健康检查请求频繁，使用 Debug 避免日志噪音
+		logFunc := log.Infof
+		if path == constants.HealthCheckPath {
+			logFunc = log.Debugf
+		}
+
+		logFunc("[%s] traceID=%v | path=%s | clientIP=%s | userId=%s | status=%d | latency=%v | timestamp=%s | err=%s",
 			method,
 			traceID,
 			path,
 			clientIP,
+			userIDStr,
 			statusCode,
 			latency,
+			timestamp,
 			c.Errors.ByType(gin.ErrorTypePrivate).String(),
 		)
 	}
@@ -429,6 +447,9 @@ const UsernameContextKey = "username"
 // RoleContextKey 用于 gin.Context.Set/Get 的 string 键
 const RoleContextKey = "role"
 
+// traceIDKey 用于 context.Context 存储 traceID，仅在包内使用。
+const traceIDKey contextKey = "trace_id"
+
 func ContextMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -472,8 +493,28 @@ func TraceMiddleware() gin.HandlerFunc {
 		}
 		c.Set(constants.HeaderXTraceID, traceID)
 		c.Header(constants.HeaderXTraceID, traceID)
+		// 同时注入 context.Context，方便 MySQL/Redis/gRPC 下游组件通过 GetTraceIDFromContext 获取
+		ctx := context.WithValue(c.Request.Context(), traceIDKey, traceID)
+		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
+}
+
+// GetTraceIDFromContext 从 context.Context 中提取链路追踪 traceID。
+// MySQL/Redis/gRPC 拦截器等非 HTTP Handler 代码通过此函数获取 traceID 打印日志。
+// 若未设置则返回空串，调用方自行降级处理。
+func GetTraceIDFromContext(ctx context.Context) string {
+	v, ok := ctx.Value(traceIDKey).(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+// SetTraceIDToContext 将 traceID 写入 context.Context，返回新的 context。
+// 主要用于 gRPC 拦截器从 metadata 提取 traceID 后注入 context，后续链路可统一获取。
+func SetTraceIDToContext(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceIDKey, traceID)
 }
 
 func generateTraceID() string {

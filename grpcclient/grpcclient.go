@@ -17,8 +17,10 @@ package grpcclient
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/middleware"
 
 	"google.golang.org/grpc"
@@ -61,12 +63,11 @@ func Dial(target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	return grpc.NewClient(target, all...)
 }
 
-// AuthForwardInterceptor 返回一元客户端拦截器，用于在服务间调用时透传鉴权身份：
-//  1. 优先取 GRPCAuthInterceptor 存入 ctx 的原始 token（即使 metadata 链丢失也有效）；
-//  2. 否则回退到入站 gRPC metadata 的 authorization（网关→后端、后端→后端 handler ctx 均携带）；
-//  3. 取到则追加到出站 metadata["authorization"]，使下游 GRPCAuthInterceptor 能校验调用方；
-//     取不到（如后台 goroutine 无入站身份）则原样放行——下游只读方法匿名可用，
-//     写方法会因 RequireGRPCAuth 返回 Unauthenticated，需调用方显式带 token。
+// AuthForwardInterceptor 返回一元客户端拦截器，用于在服务间调用时透传鉴权身份
+// 和链路追踪 ID：
+//  1. 优先取 GRPCAuthInterceptor 存入 ctx 的原始 token；同取存入 ctx 的 traceID；
+//  2. 回退到入站 gRPC metadata 的 authorization / x-trace-id；
+//  3. 取到则追加到出站 metadata，使下游能校验调用方并串联链路。
 func AuthForwardInterceptor() grpc.UnaryClientInterceptor {
 	return func(
 		ctx context.Context,
@@ -79,12 +80,19 @@ func AuthForwardInterceptor() grpc.UnaryClientInterceptor {
 		// 1) 优先使用 GRPCAuthInterceptor 存入 ctx 的 token
 		if token, ok := middleware.GetGRPCToken(ctx); ok {
 			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", token)
+			// token 可用时 traceID 一并从 context 透传
+			if traceID := middleware.GetTraceIDFromContext(ctx); traceID != "" {
+				ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), traceID)
+			}
 			return invoker(ctx, method, req, reply, cc, opts...)
 		}
-		// 2) 回退：从入站 metadata 透传 authorization
+		// 2) 回退：从入站 metadata 透传 authorization 与 traceID
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			if vals := md.Get("authorization"); len(vals) > 0 {
 				ctx = metadata.AppendToOutgoingContext(ctx, "authorization", vals[0])
+			}
+			if vals := md.Get(strings.ToLower(constants.HeaderXTraceID)); len(vals) > 0 {
+				ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), vals[0])
 			}
 		}
 		return invoker(ctx, method, req, reply, cc, opts...)
@@ -92,15 +100,21 @@ func AuthForwardInterceptor() grpc.UnaryClientInterceptor {
 }
 
 // ForwardAuth 便捷函数：在不使用 Dial 默认拦截器、需手动发起调用前，
-// 将 ctx 中的 Authorization 透传到出站 ctx（逻辑同 AuthForwardInterceptor）。
-// 返回值直接作为 RPC 调用的 ctx 即可。
+// 将 ctx 中的 Authorization 与 traceID 透传到出站 ctx（逻辑同 AuthForwardInterceptor）。
 func ForwardAuth(ctx context.Context) context.Context {
 	if token, ok := middleware.GetGRPCToken(ctx); ok {
-		return metadata.AppendToOutgoingContext(ctx, "authorization", token)
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", token)
+		if traceID := middleware.GetTraceIDFromContext(ctx); traceID != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), traceID)
+		}
+		return ctx
 	}
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if vals := md.Get("authorization"); len(vals) > 0 {
-			return metadata.AppendToOutgoingContext(ctx, "authorization", vals[0])
+			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", vals[0])
+		}
+		if vals := md.Get(strings.ToLower(constants.HeaderXTraceID)); len(vals) > 0 {
+			ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), vals[0])
 		}
 	}
 	return ctx

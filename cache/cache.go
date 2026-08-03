@@ -8,6 +8,7 @@ import (
 
 	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/twmb/murmur3"
@@ -87,11 +88,24 @@ func redisReady() bool {
 	return rdb != nil
 }
 
+// logRedisOp 记录 Redis 操作日志，成功时以 Debug 级别输出避免噪音，
+// 失败时以 Error 级别输出。traceID 从 context 提取用于链路串联。
+func logRedisOp(ctx context.Context, op, key string, err error) {
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err != nil {
+		log.Errorf("[Redis] traceID=%v | op=%s | key=%s | err=%v", traceID, op, key, err)
+	} else {
+		log.Debugf("[Redis] traceID=%v | op=%s | key=%s", traceID, op, key)
+	}
+}
+
 func Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
 	if !redisReady() {
 		return fmt.Errorf("redis not initialized")
 	}
-	return rdb.Set(ctx, GetKey(key), value, expiration).Err()
+	err := rdb.Set(ctx, GetKey(key), value, expiration).Err()
+	logRedisOp(ctx, "SET", key, err)
+	return err
 }
 
 // SetNX 仅当 key 不存在时设置值，返回 true 表示设置成功
@@ -99,24 +113,40 @@ func SetNX(ctx context.Context, key string, value interface{}, expiration time.D
 	if !redisReady() {
 		return false, fmt.Errorf("redis not initialized")
 	}
-	return rdb.SetNX(ctx, GetKey(key), value, expiration).Result()
+	ok, err := rdb.SetNX(ctx, GetKey(key), value, expiration).Result()
+	logRedisOp(ctx, "SETNX", key, err)
+	return ok, err
 }
 
 func Get(ctx context.Context, key string) (string, error) {
 	if !redisReady() {
 		return "", fmt.Errorf("redis not initialized")
 	}
-	return rdb.Get(ctx, GetKey(key)).Result()
+	val, err := rdb.Get(ctx, GetKey(key)).Result()
+	// Get 的 key miss (redis.Nil) 不算错误，以 Debug 记录即可
+	if err != nil && err != redis.Nil {
+		logRedisOp(ctx, "GET", key, err)
+	} else {
+		logRedisOp(ctx, "GET", key, nil)
+	}
+	return val, err
 }
 
 func GetBytes(ctx context.Context, key string) ([]byte, error) {
-	return rdb.Get(ctx, GetKey(key)).Bytes()
+	b, err := rdb.Get(ctx, GetKey(key)).Bytes()
+	if err != nil && err != redis.Nil {
+		logRedisOp(ctx, "GET", key, err)
+	} else {
+		logRedisOp(ctx, "GET", key, nil)
+	}
+	return b, err
 }
 
 func Delete(ctx context.Context, keys ...string) error {
 	realKeys := make([]string, len(keys))
 	for i, k := range keys {
 		realKeys[i] = GetKey(k)
+		logRedisOp(ctx, "DEL", k, nil)
 	}
 	return rdb.Del(ctx, realKeys...).Err()
 }
@@ -126,6 +156,7 @@ func Exists(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("redis not initialized")
 	}
 	n, err := rdb.Exists(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "EXISTS", key, err)
 	return n > 0, err
 }
 

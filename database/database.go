@@ -9,6 +9,7 @@ import (
 	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
+	"github.com/mysunshines/gocommon/middleware"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -90,30 +91,35 @@ func (s *SlowQueryLogger) LogMode(level logger.LogLevel) logger.Interface {
 	return s
 }
 
-func (s *SlowQueryLogger) Error(_ context.Context, _ string, values ...interface{}) {
+func (s *SlowQueryLogger) Error(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 {
-		log.Errorf("DB Error: %v", values)
+		traceID := middleware.GetTraceIDFromContext(ctx)
+		log.Errorf("[MySQL] traceID=%v | err=%v", traceID, values)
 	}
 }
 
-func (s *SlowQueryLogger) Info(_ context.Context, _ string, values ...interface{}) {
+func (s *SlowQueryLogger) Info(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 {
-		log.Infof("DB Info: %v", values)
+		traceID := middleware.GetTraceIDFromContext(ctx)
+		log.Infof("[MySQL] traceID=%v | %v", traceID, values)
 	}
 }
 
-func (s *SlowQueryLogger) Warn(_ context.Context, _ string, values ...interface{}) {
+func (s *SlowQueryLogger) Warn(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 {
-		log.Warnf("DB Warn: %v", values)
+		traceID := middleware.GetTraceIDFromContext(ctx)
+		log.Warnf("[MySQL] traceID=%v | %v", traceID, values)
 	}
 }
 
 func (s *SlowQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	elapsed := time.Since(begin)
 	sql, rows := fc()
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	if elapsed > 100*time.Millisecond {
 		metrics.RecordSlowQuery(sql, elapsed)
-		log.Warnf("Slow query: %s, duration: %v, rows: %d", sql, elapsed, rows)
+		log.Warnf("[MySQL] traceID=%v | sql=%s | duration=%v | rows=%d | slow_query=true",
+			traceID, sql, elapsed, rows)
 	}
 }
 

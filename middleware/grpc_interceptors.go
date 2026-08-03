@@ -2,12 +2,15 @@ package middleware
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -32,8 +35,20 @@ func GRPCMetricsInterceptor(service string) grpc.UnaryServerInterceptor {
 
 // GRPCLoggingInterceptor 等价于 HTTP 层的 LoggingMiddleware：
 // 记录每个 RPC 的方法、对端地址、耗时与错误（如有），便于问题排查与审计。
+// 同时从 gRPC metadata 提取 Gateway 透传的 traceID，注入 context 并打印到日志，
+// 实现 Gateway → 下游 gRPC 全链路串联。
 func GRPCLoggingInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// 从 gRPC 入站 metadata 提取 traceID（由 Gateway forwardRequest 透传）
+		traceID := ""
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if vals := md.Get(strings.ToLower(constants.HeaderXTraceID)); len(vals) > 0 {
+				traceID = vals[0]
+				// 注入 context，下游 MySQL/Redis 可通过 GetTraceIDFromContext 获取
+				ctx = SetTraceIDToContext(ctx, traceID)
+			}
+		}
+
 		start := time.Now()
 		resp, err := handler(ctx, req)
 		duration := time.Since(start)
@@ -44,9 +59,11 @@ func GRPCLoggingInterceptor() grpc.UnaryServerInterceptor {
 		}
 
 		if err != nil {
-			log.Errorf("[gRPC] %s client=%s duration=%v err=%v", info.FullMethod, clientAddr, duration, err)
+			log.Errorf("[gRPC] traceID=%v | method=%s | client=%s | duration=%v | err=%v",
+				traceID, info.FullMethod, clientAddr, duration, err)
 		} else {
-			log.Infof("[gRPC] %s client=%s duration=%v", info.FullMethod, clientAddr, duration)
+			log.Infof("[gRPC] traceID=%v | method=%s | client=%s | duration=%v",
+				traceID, info.FullMethod, clientAddr, duration)
 		}
 		return resp, err
 	}

@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -122,9 +126,20 @@ func SendRequest(ctx context.Context, api string, req, resp proto.Message) error
 	}
 
 	fullMethod := "/" + entry.Service + "/" + method
-	if err := conn.Invoke(ctx, fullMethod, req, resp); err != nil {
-		return fmt.Errorf("grpcclient: 调用 %s 失败: %w", fullMethod, err)
+
+	// 打印 gRPC 客户端调用日志，包含 traceID 实现服务间调用链路串联
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
+	invokeErr := conn.Invoke(ctx, fullMethod, req, resp)
+	latency := time.Since(start)
+
+	if invokeErr != nil {
+		log.Errorf("[gRPC-Client] traceID=%v | method=%s | target=%s | latency=%v | err=%v",
+			traceID, fullMethod, entry.Target, latency, invokeErr)
+		return fmt.Errorf("grpcclient: 调用 %s 失败: %w", fullMethod, invokeErr)
 	}
+	log.Infof("[gRPC-Client] traceID=%v | method=%s | target=%s | latency=%v",
+		traceID, fullMethod, entry.Target, latency)
 	return nil
 }
 
