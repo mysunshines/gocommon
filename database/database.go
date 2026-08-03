@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/config"
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
 	"github.com/mysunshines/gocommon/middleware"
@@ -37,7 +38,7 @@ func Init(cfg *config.DatabaseConfig, env string) error {
 	var initErr error
 	once.Do(func() {
 		gormLogger := logger.Interface(&SlowQueryLogger{LogLevel: logger.Warn})
-		if env == "development" {
+		if env == constants.EnvDevelopment {
 			gormLogger = gormLogger.LogMode(logger.Info)
 		}
 

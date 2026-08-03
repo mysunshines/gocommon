@@ -212,7 +212,7 @@ const csrfHeader = "X-CSRF-Token"
 // 重要：Bearer 鉴权不依赖 Cookie，因此不再设置 Access-Control-Allow-Credentials，
 // 消除原先 "* + credentials" 这一违规且危险的配置。
 func CORSMiddleware() gin.HandlerFunc {
-	allowed := parseAllowedOrigins(os.Getenv("CORS_ALLOW_ORIGINS"))
+	allowed := parseAllowedOrigins(os.Getenv(constants.EnvCORSAllowOrigins))
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin != "" {

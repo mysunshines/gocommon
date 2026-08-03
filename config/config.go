@@ -161,12 +161,12 @@ func Load(path string) (*Config, error) {
 //   - 均未设或development  → config/config.yaml（向后兼容本地开发）
 func ResolveConfigPath() string {
 	// 1. 显式 CONFIG_PATH 环境变量（最高优先级）
-	if p := os.Getenv("CONFIG_PATH"); p != "" {
+	if p := os.Getenv(constants.EnvConfigPath); p != "" {
 		return p
 	}
 	// 2. 根据 APP_ENV 构造：config/config_test.yaml / config/config_production.yaml
-	env := os.Getenv("APP_ENV")
-	if env == "" || env == "development" {
+	env := os.Getenv(constants.EnvAppEnv)
+	if env == "" || env == constants.EnvDevelopment {
 		return "config/config.yaml"
 	}
 	return fmt.Sprintf("config/config_%s.yaml", env)
@@ -205,7 +205,7 @@ func LoadFile(path string, out interface{}) error {
 // ApplyDefaults 为配置填充默认值（供各服务复用）
 func ApplyDefaults(c *Config) {
 	if c.App.Env == "" {
-		c.App.Env = "development"
+		c.App.Env = constants.EnvDevelopment
 	}
 	if c.App.LogLevel == "" {
 		c.App.LogLevel = "info"
@@ -284,49 +284,49 @@ func ApplyDefaults(c *Config) {
 //	CONSUL_ADDRESS / MICRO_REGISTRY_ADDRESS
 func ApplyEnvOverrides(c *Config) {
 	// Database
-	if v := os.Getenv("DB_HOST"); v != "" {
+	if v := os.Getenv(constants.EnvDBHost); v != "" {
 		c.Database.Host = v
 	}
-	if v := os.Getenv("DB_PORT"); v != "" {
+	if v := os.Getenv(constants.EnvDBPort); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			c.Database.Port = port
 		}
 	}
-	if v := os.Getenv("DB_USER"); v != "" {
+	if v := os.Getenv(constants.EnvDBUser); v != "" {
 		c.Database.User = v
 	}
-	if v := os.Getenv("DB_PASSWORD"); v != "" {
+	if v := os.Getenv(constants.EnvDBPassword); v != "" {
 		c.Database.Password = v
 	}
-	if v := os.Getenv("DB_NAME"); v != "" {
+	if v := os.Getenv(constants.EnvDBName); v != "" {
 		c.Database.Name = v
 	}
 
 	// Redis
-	if v := os.Getenv("REDIS_HOST"); v != "" {
+	if v := os.Getenv(constants.EnvRedisHost); v != "" {
 		c.Redis.Host = v
 	}
-	if v := os.Getenv("REDIS_PORT"); v != "" {
+	if v := os.Getenv(constants.EnvRedisPort); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			c.Redis.Port = port
 		}
 	}
-	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+	if v := os.Getenv(constants.EnvRedisPassword); v != "" {
 		c.Redis.Password = v
 	}
 
 	// Consul — 优先 CONSUL_ADDRESS，其次 MICRO_REGISTRY_ADDRESS
-	if v := os.Getenv("CONSUL_ADDRESS"); v != "" {
+	if v := os.Getenv(constants.EnvConsulAddress); v != "" {
 		c.Consul.Address = v
 		c.Micro.Registry.Address = v
-	} else if v := os.Getenv("MICRO_REGISTRY_ADDRESS"); v != "" {
+	} else if v := os.Getenv(constants.EnvMicroRegistryAddress); v != "" {
 		// Docker Compose 中通常用 MICRO_REGISTRY_ADDRESS
 		c.Consul.Address = v
 		c.Micro.Registry.Address = v
 	}
 
 	// gRPC Port — 支持 MICRO_SERVER_ADDRESS 格式 :port
-	if v := os.Getenv("GRPC_PORT"); v != "" {
+	if v := os.Getenv(constants.EnvGRPCPort); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			c.GRPC.Port = port
 		}

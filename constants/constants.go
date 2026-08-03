@@ -311,7 +311,26 @@ const (
 )
 
 // ============================================================================
+// 运行环境值常量
+// 各服务 / 配置中心 / 配置文件路径解析统一引用，避免散落 "test" / "production" / "dev" 等字面量。
+// ============================================================================
+const (
+	// EnvDevelopment 开发环境（默认）
+	EnvDevelopment = "development"
+
+	// EnvTest 测试环境（如 APP_ENV=test → config_test.yaml）
+	EnvTest = "test"
+
+	// EnvProduction 生产环境（如 APP_ENV=production → config_production.yaml）
+	EnvProduction = "production"
+
+	// DefaultEnv 默认运行环境，未设置 APP_ENV 时使用 development
+	DefaultEnv = EnvDevelopment
+)
+
+// ============================================================================
 // 环境变量名常量
+// 所有读取环境变量的位置统一引用，避免字符串拼写不一致。
 // ============================================================================
 const (
 	// EnvLogDir 日志目录环境变量
@@ -323,8 +342,43 @@ const (
 	// EnvConfigPath 配置文件路径环境变量（显式指定，优先级最高）
 	EnvConfigPath = "CONFIG_PATH"
 
-	// DefaultEnv 默认运行环境，未设置 APP_ENV 时使用 development
-	DefaultEnv = "development"
+	// EnvAdvertiseAddr Consul 服务注册时使用的对外通告地址（host:port 中的 host）
+	EnvAdvertiseAddr = "ADVERTISE_ADDR"
+
+	// EnvConsulAddress Consul 连接地址（host:port）
+	EnvConsulAddress = "CONSUL_ADDRESS"
+
+	// EnvMicroRegistryAddress 微服务注册中心地址（与 CONSUL_ADDRESS 等效，Docker Compose 常用）
+	EnvMicroRegistryAddress = "MICRO_REGISTRY_ADDRESS"
+
+	// EnvGRPCPort gRPC 监听端口
+	EnvGRPCPort = "GRPC_PORT"
+
+	// ---- 数据库 ----
+	EnvDBHost     = "DB_HOST"
+	EnvDBPort     = "DB_PORT"
+	EnvDBUser     = "DB_USER"
+	EnvDBPassword = "DB_PASSWORD"
+	EnvDBName     = "DB_NAME"
+
+	// ---- Redis ----
+	EnvRedisHost     = "REDIS_HOST"
+	EnvRedisPort     = "REDIS_PORT"
+	EnvRedisPassword = "REDIS_PASSWORD"
+
+	// ---- 邮件（user-service）----
+	EnvSMTPHost     = "SMTP_HOST"
+	EnvSMTPPort     = "SMTP_PORT"
+	EnvSMTPUsername = "SMTP_USERNAME"
+	EnvSMTPPassword = "SMTP_PASSWORD"
+	EnvSMTPFrom     = "SMTP_FROM"
+
+	// ---- 下游服务地址（comment-service 依赖 user-service）----
+	EnvUserServiceHost = "USER_SERVICE_HOST"
+	EnvUserServicePort = "USER_SERVICE_PORT"
+
+	// ---- CORS ----
+	EnvCORSAllowOrigins = "CORS_ALLOW_ORIGINS"
 )
 
 // ============================================================================

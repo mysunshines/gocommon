@@ -57,7 +57,7 @@ func Register(r Registration) (func() error, error) {
 
 	addr := r.Address
 	if addr == "" {
-		addr = os.Getenv("ADVERTISE_ADDR")
+		addr = os.Getenv(constants.EnvAdvertiseAddr)
 	}
 	if addr == "" {
 		addr = detectOutboundIP()
