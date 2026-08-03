@@ -24,6 +24,14 @@ func ExampleGetLogger() {
 	log.Info("auto-initialized with defaults")
 }
 
+// ExampleSetLevel 演示动态调整运行期日志级别（供配置中心热更等场景）。
+func ExampleSetLevel() {
+	// 线上排查时将级别临时调为 debug，事后调回 info，无需重启。
+	_ = SetLevel("debug")
+	// ... 排查结束后 ...
+	_ = SetLevel("info")
+}
+
 // ============================================================================
 // 分级日志示例
 // ============================================================================

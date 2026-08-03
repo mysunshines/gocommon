@@ -167,6 +167,22 @@ func RotateLog(svcName string) error {
 	return doRotate(today)
 }
 
+// SetLevel 动态调整运行期日志级别，供配置中心热更等场景即时生效，无需重启。
+// level 为 logrus 支持的字符串：debug / info / warn / error / fatal / panic。
+// 非法级别会被忽略（保持当前级别）并返回错误。
+func SetLevel(level string) error {
+	if logger == nil {
+		// 尚未初始化时，先以默认参数初始化再设置，避免 nil panic。
+		Init(constants.DefaultLogDir, constants.DefaultLogLevel, constants.ServiceNameGateway)
+	}
+	lv, err := logrus.ParseLevel(level)
+	if err != nil {
+		return fmt.Errorf("log: invalid level %q: %w", level, err)
+	}
+	logger.SetLevel(lv)
+	return nil
+}
+
 // StopRotation 停止后台日志轮转（优雅关闭时调用）
 func StopRotation() {
 	if stopCh != nil {
