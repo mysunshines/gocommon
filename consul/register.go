@@ -19,6 +19,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 )
 
@@ -76,7 +77,7 @@ func Register(r Registration) (func() error, error) {
 	}
 	if r.HTTPPort > 0 {
 		// 优先 HTTP /health 检查（所有微服务均已实现 /health）
-		check["HTTP"] = fmt.Sprintf("http://%s:%d/health", addr, r.HTTPPort)
+		check["HTTP"] = fmt.Sprintf("http://%s:%d%s", addr, r.HTTPPort, constants.HealthCheckPath)
 	} else if r.GRPCPort > 0 {
 		// 无 HTTP 端点时退化为 TCP 检查 gRPC 端口
 		check["TCP"] = fmt.Sprintf("%s:%d", addr, r.GRPCPort)

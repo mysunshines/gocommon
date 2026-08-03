@@ -79,6 +79,9 @@ const (
 	// HealthCheckPath 健康检查路径，Docker/Consul 探活统一使用
 	HealthCheckPath = "/health"
 
+	// MetricsPath Prometheus 指标暴露路径，运维监控统一使用
+	MetricsPath = "/metrics"
+
 	// ReadinessPath 就绪检查路径，K8s/Consul 就绪探针统一使用
 	ReadinessPath = "/ready"
 

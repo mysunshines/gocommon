@@ -141,9 +141,9 @@ func LoggingMiddleware() gin.HandlerFunc {
 			userIDStr = strconv.FormatUint(uint64(userID), 10)
 		}
 
-		// 健康检查请求频繁，使用 Debug 避免日志噪音
+		// 运维探测类请求（健康检查/指标/就绪/版本）频繁，使用 Debug 避免日志噪音
 		logFunc := log.Infof
-		if path == constants.HealthCheckPath {
+		if path == constants.HealthCheckPath || path == constants.MetricsPath || path == constants.ReadinessPath || path == constants.VersionPath {
 			logFunc = log.Debugf
 		}
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/mysunshines/gocommon/constants"
 	"gopkg.in/yaml.v3"
 )
 
@@ -265,7 +266,7 @@ func ApplyDefaults(c *Config) {
 		c.Metrics.Port = 9090
 	}
 	if c.Metrics.Path == "" {
-		c.Metrics.Path = "/metrics"
+		c.Metrics.Path = constants.MetricsPath
 	}
 	if c.RateLimit.QPS == 0 {
 		c.RateLimit.QPS = 1000
