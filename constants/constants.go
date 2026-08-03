@@ -78,6 +78,12 @@ const (
 
 	// HealthCheckPath 健康检查路径，Docker/Consul 探活统一使用
 	HealthCheckPath = "/health"
+
+	// ReadinessPath 就绪检查路径，K8s/Consul 就绪探针统一使用
+	ReadinessPath = "/ready"
+
+	// VersionPath 版本信息路径，运维查看统一使用
+	VersionPath = "/version"
 )
 
 // ============================================================================
