@@ -20,13 +20,19 @@ var dangerousScheme = regexp.MustCompile(`(?i)(href|src)\s*=\s*["']\s*(javascrip
 // RenderMarkdown 将 Markdown 文本渲染为安全的 HTML 字符串。
 //
 // 安全策略（所有渲染逻辑均置于后端，前端只负责展示，不再自行拼接 HTML）：
-//  1. 先对原始输入做 HTML 转义，使任何注入的 <script> 等标签退化为纯文本；
-//  2. 再经 Goldmark 转换为 Markdown 语义 HTML；
-//  3. 最后清理链接/图片 URL 中的危险协议（javascript:/vbscript:/data:），
+//  1. 若存储的 content 中已包含 HTML 实体（如 &lt; &gt; &amp;，多见于经网关/
+//     编辑器二次转义的场景），先做一次 html.UnescapeString 还原为原始字符，
+//     避免后续转义产生双重实体（&amp;lt;）导致前端把 "&lt;" 当作字面文本显示；
+//  2. 再对还原后的输入做 HTML 转义，使任何注入的 <script> 等标签退化为纯文本；
+//  3. 经 Goldmark 转换为 Markdown 语义 HTML；
+//  4. 最后清理链接/图片 URL 中的危险协议（javascript:/vbscript:/data:），
 //     防止通过 [text](javascript:...) 形式绕过。
 func RenderMarkdown(content string) string {
-	// 1. 转义原始 HTML
-	escaped := html.EscapeString(content)
+	// 1. 还原可能被二次转义存储的 HTML 实体
+	decoded := html.UnescapeString(content)
+
+	// 2. 转义原始 HTML
+	escaped := html.EscapeString(decoded)
 
 	// 2. 渲染 Markdown
 	var buf bytes.Buffer
