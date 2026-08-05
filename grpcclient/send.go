@@ -14,8 +14,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// serviceEntry 注册表中的一项：逻辑服务名对应的真实 proto 服务名与 gRPC 目标地址。
-type serviceEntry struct {
+// ServiceEntry 注册表中的一项：逻辑服务名对应的真实 proto 服务名与 gRPC 目标地址。
+type ServiceEntry struct {
 	// Service 是 proto 全限定服务名（包名.服务名），如 "user.UserService"，
 	// 用于构造 gRPC 全方法名 "/user.UserService/Method"，必须与服务端精确匹配。
 	Service string
@@ -23,7 +23,7 @@ type serviceEntry struct {
 	Target string
 }
 
-// serviceRegistry 服务查找键 -> serviceEntry。
+// serviceRegistry 服务查找键 -> ServiceEntry。
 // 调用方在启动时通过 RegisterService 写入其下游依赖；SendRequest 据此解析目标。
 // 同一个下游会以两个键写入，两种调用风格因此都能命中同一项：
 //   - 逻辑名(alias)，如 "user.v1"，对应 api "user.v1.IsInBlacklist"；
@@ -31,10 +31,10 @@ type serviceEntry struct {
 //     xxx_FullMethodName 常量（"/user.v1.UserService/IsInBlacklist"）。
 //
 // 例如 grpcclient.RegisterService("user.v1", "user.v1.UserService", "user-service:9002")。
-var serviceRegistry sync.Map // map[string]*serviceEntry
+var serviceRegistry sync.Map // map[string]*ServiceEntry
 
 // serviceResolver 自定义服务解析器（可选），覆盖默认注册表，例如对接 Consul 健康查询。
-var serviceResolver func(name string) (*serviceEntry, bool)
+var serviceResolver func(name string) (*ServiceEntry, bool)
 
 // RegisterService 注册逻辑服务名到 gRPC 目标地址，并声明其 proto 全限定服务名。
 //   - alias：调用侧 api 使用的逻辑名，形如 "user.v1"，与 HTTP API 版本化风格保持一致；
@@ -46,7 +46,7 @@ var serviceResolver func(name string) (*serviceEntry, bool)
 //	grpcclient.SendRequest(ctx, user.UserService_IsInBlacklist_FullMethodName, req, resp) // 推荐
 //	grpcclient.SendRequest(ctx, "user.v1.IsInBlacklist", req, resp)
 func RegisterService(alias, service, target string) {
-	entry := &serviceEntry{Service: service, Target: target}
+	entry := &ServiceEntry{Service: service, Target: target}
 	serviceRegistry.Store(alias, entry)
 	// 同时以 proto 全限定服务名为键注册，使调用侧可直接传入下游 pb 生成的
 	// xxx_FullMethodName 常量（形如 "/user.v1.UserService/IsInBlacklist"），
@@ -57,8 +57,8 @@ func RegisterService(alias, service, target string) {
 }
 
 // SetServiceResolver 设置自定义服务解析器，覆盖默认注册表（用于对接 Consul 等服务发现）。
-// 解析器返回 (*serviceEntry, true) 时优先于 RegisterService 注册表。
-func SetServiceResolver(fn func(name string) (*serviceEntry, bool)) {
+// 解析器返回 (*ServiceEntry, true) 时优先于 RegisterService 注册表。
+func SetServiceResolver(fn func(name string) (*ServiceEntry, bool)) {
 	serviceResolver = fn
 }
 
@@ -164,14 +164,14 @@ func parseAPI(api string) (alias, method string, err error) {
 }
 
 // resolveTarget 解析逻辑服务名对应的注册项：优先自定义解析器，其次注册表。
-func resolveTarget(alias string) (*serviceEntry, bool) {
+func resolveTarget(alias string) (*ServiceEntry, bool) {
 	if serviceResolver != nil {
 		if e, ok := serviceResolver(alias); ok {
 			return e, true
 		}
 	}
 	if e, ok := serviceRegistry.Load(alias); ok {
-		return e.(*serviceEntry), true
+		return e.(*ServiceEntry), true
 	}
 	return nil, false
 }
