@@ -146,7 +146,7 @@ func (d *Discovery) query(service string) ([]string, error) {
 // ---------------------------------------------------------------------------
 
 // aliasToService 维护 "proto 服务名(alias) -> Consul 服务名" 的映射，
-// 因为 grpcclient.SendRequest 用 proto 的 full method name（如 user.v1.AuditService）
+// 因为 grpcclient.SendRequest 用 proto 的 full method name（如 user.v1.UserService）
 // 作为解析键，而 Consul 里注册的服务名是业务名（如 user-service）。
 var (
 	aliasMu       sync.RWMutex
@@ -154,7 +154,9 @@ var (
 )
 
 // RegisterAlias 声明 proto 服务名(alias) 对应的 Consul 服务名。
-// 例如：RegisterAlias("user.v1.AuditService", "user-service")。
+// 当 proto 的 full method 前缀（如 user.v1.UserService）与 Consul 注册名
+// （如 user-service）不一致时使用；若二者一致则无需调用，解析会兜底直接用 alias。
+// 例如：RegisterAlias("user.v1.UserService", "user-service")。
 func RegisterAlias(alias, consulService string) {
 	aliasMu.Lock()
 	aliasToService[alias] = consulService
