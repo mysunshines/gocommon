@@ -8,17 +8,19 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/resilience"
 )
 
 // Client UDP 客户端
 type Client struct {
-	address      string        // 远端地址 host:port
-	localAddr    *net.UDPAddr  // 本地绑定地址（nil 表示由系统分配）
-	conn         *net.UDPConn  // UDP 连接
-	connMu       sync.RWMutex  // 保护 conn 的并发读写
-	readTimeout  time.Duration // 读超时（0 表示不限）
-	writeTimeout time.Duration // 写超时（0 表示不限）
-	bufSize      int           // 接收缓冲大小
+	address        string        // 远端地址 host:port
+	localAddr      *net.UDPAddr  // 本地绑定地址（nil 表示由系统分配）
+	conn           *net.UDPConn  // UDP 连接
+	connMu         sync.RWMutex  // 保护 conn 的并发读写
+	readTimeout    time.Duration // 读超时（0 表示不限）
+	writeTimeout   time.Duration // 写超时（0 表示不限）
+	bufSize        int           // 接收缓冲大小
+	resilienceKey  string        // resilience serviceKey；非空时其 Timeout 覆盖读写超时
 }
 
 // Config 连接配置
@@ -66,6 +68,23 @@ func New(address string, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
+// applyDeadlines 统一设置读写截止时间：若设置了 resilienceKey，则优先使用
+// resilience 策略的 Timeout 覆盖客户端自身的读写超时，实现按下游动态调超时。
+func (c *Client) applyDeadlines(conn *net.UDPConn) {
+	readTO, writeTO := c.readTimeout, c.writeTimeout
+	if c.resilienceKey != "" {
+		if p := resilience.ForService(c.resilienceKey); p.Timeout > 0 {
+			readTO, writeTO = p.Timeout, p.Timeout
+		}
+	}
+	if readTO > 0 {
+		conn.SetReadDeadline(time.Now().Add(readTO))
+	}
+	if writeTO > 0 {
+		conn.SetWriteDeadline(time.Now().Add(writeTO))
+	}
+}
+
 // WithLocalAddress 设置本地地址
 func WithLocalAddress(addr string) Option {
 	return func(c *Client) {
@@ -96,6 +115,14 @@ func WithBufferSize(size int) Option {
 	}
 }
 
+// WithResilienceKey 设置 resilience 的 serviceKey；非空时 resilience 策略的 Timeout
+// 会覆盖客户端自身的读写超时，实现按下游动态调超时。
+func WithResilienceKey(key string) Option {
+	return func(c *Client) {
+		c.resilienceKey = key
+	}
+}
+
 // Send 发送数据
 func (c *Client) Send(ctx context.Context, data []byte) error {
 	c.connMu.RLock()
@@ -113,9 +140,7 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 	}
 
 	// 设置超时
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	// 发送数据
 	n, err := conn.WriteToUDP(data, addr)
@@ -145,9 +170,7 @@ func (c *Client) SendTo(ctx context.Context, address string, data []byte) error 
 		return fmt.Errorf("failed to resolve address: %w", err)
 	}
 
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
@@ -171,9 +194,7 @@ func (c *Client) Receive(ctx context.Context) ([]byte, *net.UDPAddr, error) {
 		return nil, nil, fmt.Errorf("connection is nil")
 	}
 
-	if c.readTimeout > 0 {
-		conn.SetReadDeadline(time.Now().Add(c.readTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	data := make([]byte, c.bufSize)
 	n, addr, err := conn.ReadFromUDP(data)
@@ -194,9 +215,7 @@ func (c *Client) ReceiveWithBuffer(ctx context.Context, buf []byte) (int, *net.U
 		return 0, nil, fmt.Errorf("connection is nil")
 	}
 
-	if c.readTimeout > 0 {
-		conn.SetReadDeadline(time.Now().Add(c.readTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	n, addr, err := conn.ReadFromUDP(buf)
 	if err != nil {
@@ -244,9 +263,7 @@ func (c *Client) Broadcast(ctx context.Context, port int, data []byte) error {
 		return fmt.Errorf("connection is nil")
 	}
 
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	// 设置广播选项
 	if err := conn.SetWriteBuffer(c.bufSize); err != nil {
@@ -280,9 +297,7 @@ func (c *Client) Multicast(ctx context.Context, multicastAddr string, data []byt
 		return fmt.Errorf("connection is nil")
 	}
 
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {

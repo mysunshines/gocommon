@@ -12,15 +12,17 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/resilience"
 )
 
 // Client HTTP 客户端
 type Client struct {
-	client     *http.Client      // 底层标准库 HTTP 客户端
-	baseURL    string            // 基础 URL，拼接到各请求路径前
-	timeout    time.Duration     // 请求超时
-	headers    map[string]string // 默认请求头（单次请求可覆盖）
-	middleware []Middleware      // 请求发出前执行的中间件链
+	client         *http.Client      // 底层标准库 HTTP 客户端
+	baseURL        string            // 基础 URL，拼接到各请求路径前
+	timeout        time.Duration     // 请求超时
+	headers        map[string]string // 默认请求头（单次请求可覆盖）
+	middleware     []Middleware      // 请求发出前执行的中间件链
+	resilienceKey  string            // resilience 按此 key 区分熔断/限流；为空时取 baseURL 的 host
 }
 
 // Middleware HTTP 中间件
@@ -91,6 +93,14 @@ func WithHeaders(headers map[string]string) Option {
 func WithMiddleware(m Middleware) Option {
 	return func(c *Client) {
 		c.middleware = append(c.middleware, m)
+	}
+}
+
+// WithResilienceKey 设置 resilience 的 serviceKey，用于按下游区分超时/熔断/限流。
+// 不设置时默认取 baseURL 的 host 作为 key。与 resilience.SetPolicy(key, ...) 配套使用。
+func WithResilienceKey(key string) Option {
+	return func(c *Client) {
+		c.resilienceKey = key
 	}
 }
 
@@ -259,10 +269,32 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		return nil, err
 	}
 
-	// 发送请求
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	// 选取 resilience serviceKey：显式 key 优先，否则取 baseURL 的 host。
+	key := c.resilienceKey
+	if key == "" && c.baseURL != "" {
+		if u, err := url.Parse(c.baseURL); err == nil {
+			key = u.Scheme + "://" + u.Host
+		} else {
+			key = c.baseURL
+		}
+	}
+	policy := resilience.ForService(key)
+	ctx := resilience.WithServiceKey(req.Context(), key)
+
+	// 用 resilience 包裹真正的网络请求：超时 + 限流 + 熔断 + 降级。
+	var resp *http.Response
+	execErr := policy.Execute(ctx, func(cctx context.Context) error {
+		// 将带超时的 context 注入请求，覆盖 client.Timeout（后者对读取也生效，二者取最短）。
+		r := req.Clone(cctx)
+		hr, err := c.client.Do(r)
+		if err != nil {
+			return err
+		}
+		resp = hr
+		return nil
+	}, nil)
+	if execErr != nil {
+		return nil, fmt.Errorf("request failed: %w", execErr)
 	}
 	defer resp.Body.Close()
 

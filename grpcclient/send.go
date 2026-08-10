@@ -9,6 +9,7 @@ import (
 
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/middleware"
+	"github.com/mysunshines/gocommon/resilience"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -110,6 +111,17 @@ func getConn(target string) (*grpc.ClientConn, error) {
 // 注意：api 的 alias 在注册时须绑定到真实的 proto 全限定服务名（含包名），这样
 // conn.Invoke 的全方法名 "/<protoService>/<Method>" 才能与服务端精确匹配。
 func SendRequest(ctx context.Context, api string, req, resp proto.Message) error {
+	return SendRequestWithFallback(ctx, api, req, resp, nil)
+}
+
+// SendRequestWithFallback 是 SendRequest 的增强版：在发起 gRPC 一元调用前，
+// 依据 resilience.ForService(alias) 返回的 Policy 施加超时、限流与熔断控制；
+// 当熔断打开或调用失败且提供了 fallback 时，调用 fallback 返回兜底响应，
+// 避免下游故障向上游雪崩。fallback 可为 nil（不降级，错误直接上抛）。
+//
+// 降级函数应负责填充 resp（若调用方需要兜底内容），其返回值仅用于表达降级是否成功；
+// 函数签名与 Policy.Execute 对齐，便于直接复用。
+func SendRequestWithFallback(ctx context.Context, api string, req, resp proto.Message, fallback func(ctx context.Context) error) error {
 	alias, method, err := parseAPI(api)
 	if err != nil {
 		return err
@@ -127,10 +139,26 @@ func SendRequest(ctx context.Context, api string, req, resp proto.Message) error
 
 	fullMethod := "/" + entry.Service + "/" + method
 
-	// 打印 gRPC 客户端调用日志，包含 traceID 实现服务间调用链路串联
+	// 将 alias 作为 serviceKey 注入 context，使 resilience 按下游区分熔断/限流。
+	policy := resilience.ForService(alias)
+	ctx = resilience.WithServiceKey(ctx, alias)
+
 	traceID := middleware.GetTraceIDFromContext(ctx)
 	start := time.Now()
-	invokeErr := conn.Invoke(ctx, fullMethod, req, resp)
+
+	invoke := func(c context.Context) error {
+		return conn.Invoke(c, fullMethod, req, resp)
+	}
+
+	// 降级钩子：fallback 负责填充 resp，并对 ctx deadline 友好。
+	var fb func(c context.Context) (interface{}, error)
+	if fallback != nil {
+		fb = func(c context.Context) (interface{}, error) {
+			return nil, fallback(c)
+		}
+	}
+
+	invokeErr := policy.Execute(ctx, invoke, fb)
 	latency := time.Since(start)
 
 	if invokeErr != nil {
