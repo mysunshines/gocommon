@@ -23,6 +23,7 @@ type Config struct {
 	Micro     MicroConfig     `yaml:"micro"`      // 微服务（注册中心）配置
 	Metrics   MetricsConfig   `yaml:"metrics"`    // Prometheus 指标暴露配置
 	RateLimit RateLimitConfig `yaml:"rate_limit"` // 限流配置
+	Server    ServerConfig    `yaml:"server"`     // 入站 server 调优（gRPC/HTTP 超时与 keepalive）
 }
 
 type AppConfig struct {
@@ -202,6 +203,41 @@ func LoadFile(path string, out interface{}) error {
 	return nil
 }
 
+// ServerConfig 入站 server 调优配置（gRPC/HTTP 的超时与 keepalive）。
+// 放在 config 而非 configcenter，是因为 server 构造（keepalive/并发流）在启动期即固定，
+// 但其中的 method 超时与 HTTP 超时可由 configcenter 热更覆盖（写回本结构的全局实例）。
+//
+// 可热更：GRPC.DefaultTimeoutSec / SlowMethods / SlowMultiplier（拦截器每次请求读取）、
+//
+//	HTTP 各超时（http.Server 运行时支持动态修改）。
+//
+// 仅启动期：GRPC 的 keepalive 与 MaxConcurrentStreams（gRPC server options 构造后不可变）。
+type ServerConfig struct {
+	GRPC GRPCInboundConfig `yaml:"grpc"` // gRPC 入站配置
+	HTTP HTTPInboundConfig `yaml:"http"` // HTTP 入站配置
+}
+
+// GRPCInboundConfig gRPC server 端入站配置（秒为单位；MaxConcurrentStreams 为个数）。
+type GRPCInboundConfig struct {
+	DefaultTimeoutSec     int      `yaml:"default_timeout_sec"`      // 默认入站请求超时（秒）
+	SlowMethods           []string `yaml:"slow_methods"`            // 需放大超时的方法名后缀（如 ListComments）
+	SlowMultiplier        float64  `yaml:"slow_multiplier"`         // 慢方法超时放大倍数（默认 2）
+	MaxConnectionIdle     int      `yaml:"max_connection_idle_sec"` // keepalive: 空闲连接回收（秒）
+	MaxConnectionAge      int      `yaml:"max_connection_age_sec"`  // keepalive: 连接最大寿命（秒）
+	MaxConnectionAgeGrace int      `yaml:"max_connection_age_grace_sec"` // keepalive: 寿命宽限（秒）
+	MinPingInterval       int      `yaml:"min_ping_interval_sec"`   // keepalive: 客户端最小 ping 间隔（秒）
+	MaxConcurrentStreams  uint32   `yaml:"max_concurrent_streams"`  // 最大并发流（仅启动期）
+}
+
+// HTTPInboundConfig HTTP server 端入站超时配置（秒为单位）。
+// 标准库 http.Server 在运行时会读取这些字段，因此可热更（改全局即生效）。
+type HTTPInboundConfig struct {
+	ReadTimeoutSec       int `yaml:"read_timeout_sec"`        // 读取整个请求体超时
+	ReadHeaderTimeoutSec int `yaml:"read_header_timeout_sec"` // 读取请求头超时
+	WriteTimeoutSec      int `yaml:"write_timeout_sec"`       // 写入响应超时
+	IdleTimeoutSec       int `yaml:"idle_timeout_sec"`        // 空闲连接超时
+}
+
 // ApplyDefaults 为配置填充默认值（供各服务复用）
 func ApplyDefaults(c *Config) {
 	if c.App.Env == "" {
@@ -273,6 +309,40 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.RateLimit.Burst == 0 {
 		c.RateLimit.Burst = 2000
+	}
+	// 入站 server 调优默认值（与 constants 中的历史默认值保持一致）。
+	if c.Server.GRPC.DefaultTimeoutSec == 0 {
+		c.Server.GRPC.DefaultTimeoutSec = constants.DefaultGRPCUnaryTimeout
+	}
+	if c.Server.GRPC.SlowMultiplier == 0 {
+		c.Server.GRPC.SlowMultiplier = 2
+	}
+	if c.Server.GRPC.MaxConnectionIdle == 0 {
+		c.Server.GRPC.MaxConnectionIdle = constants.DefaultGRPCMaxConnectionIdle
+	}
+	if c.Server.GRPC.MaxConnectionAge == 0 {
+		c.Server.GRPC.MaxConnectionAge = constants.DefaultGRPCMaxConnectionAge
+	}
+	if c.Server.GRPC.MaxConnectionAgeGrace == 0 {
+		c.Server.GRPC.MaxConnectionAgeGrace = constants.DefaultGRPCMaxConnectionAgeGrace
+	}
+	if c.Server.GRPC.MinPingInterval == 0 {
+		c.Server.GRPC.MinPingInterval = constants.DefaultGRPCMinPingInterval
+	}
+	if c.Server.GRPC.MaxConcurrentStreams == 0 {
+		c.Server.GRPC.MaxConcurrentStreams = constants.DefaultGRPCMaxConcurrentStreams
+	}
+	if c.Server.HTTP.ReadTimeoutSec == 0 {
+		c.Server.HTTP.ReadTimeoutSec = constants.DefaultReadTimeout
+	}
+	if c.Server.HTTP.ReadHeaderTimeoutSec == 0 {
+		c.Server.HTTP.ReadHeaderTimeoutSec = constants.DefaultReadHeaderTimeout
+	}
+	if c.Server.HTTP.WriteTimeoutSec == 0 {
+		c.Server.HTTP.WriteTimeoutSec = constants.DefaultWriteTimeout
+	}
+	if c.Server.HTTP.IdleTimeoutSec == 0 {
+		c.Server.HTTP.IdleTimeoutSec = constants.DefaultIdleTimeout
 	}
 }
 

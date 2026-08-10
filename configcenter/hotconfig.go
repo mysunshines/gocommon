@@ -32,6 +32,7 @@ type HotConfig struct {
 	RateLimit     config.RateLimitConfig          `yaml:"rate_limit" json:"rate_limit"`
 	JWTExpireTime int                             `yaml:"jwt_expire_time" json:"jwt_expire_time"`
 	Resilience    map[string]resilience.PolicySpec `yaml:"resilience" json:"resilience"`
+	Server        *config.ServerConfig            `yaml:"server" json:"server"`
 }
 
 // ServiceConfig 是单个服务接入配置中心的句柄：持有最新热更配置快照，
@@ -128,6 +129,14 @@ func (sc *ServiceConfig) apply(hc *HotConfig) {
 	if hc.JWTExpireTime > 0 {
 		c.JWT.ExpireTime = hc.JWTExpireTime
 	}
+
+	// 入站 server 调优：写回全局 config，使 gRPC method 超时（拦截器每次请求读取）与
+	// HTTP 超时（http.Server 运行时读取）热更即时生效；keepalive/并发流仅启动期生效。
+	// 用指针区分"未配置 server 段"（不覆盖全局默认）与"显式配置了全零值"。
+	if hc.Server != nil {
+		c.Server = *hc.Server
+	}
+
 	log.Infof("configcenter: applied hot config for %s/%s (log_level=%s qps=%d burst=%d jwt=%ds resilience=%d)",
 		sc.service, sc.env, hc.LogLevel, hc.RateLimit.QPS, hc.RateLimit.Burst, hc.JWTExpireTime, len(hc.Resilience))
 }
