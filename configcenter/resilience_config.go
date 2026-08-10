@@ -94,9 +94,22 @@ func ApplyResilience(cfg *ResilienceConfig) {
 // LoadResilience 从 Consul KV 拉取并应用 resilience 策略。key 不存在时返回 ErrNotFound，
 // 调用方可忽略（保留进程内已 SetPolicy 的值或回落默认策略）。
 func (sc *ServiceConfig) LoadResilience() error {
-	key := ResilienceKey(sc.service, sc.env)
+	return sc.client.LoadResilience(sc.service, sc.env)
+}
+
+// WatchResilience 在后台长轮询 resilience KV key，变更时即时刷新策略。
+// 阻塞式，应在 goroutine 中调用（如 go sc.WatchResilience()）。
+func (sc *ServiceConfig) WatchResilience() {
+	sc.client.WatchResilience(sc.service, sc.env)
+}
+
+// LoadResilience 从 Consul KV 拉取并应用 resilience 策略。key 不存在时返回 ErrNotFound。
+// service/env 仅用于拼接 KV key（resilience/<service>/<env>），与具体业务无关，
+// 因此 *Client 也暴露此方法，便于未使用 ServiceConfig 的服务（如 report-service）直接调用。
+func (c *Client) LoadResilience(service, env string) error {
+	key := ResilienceKey(service, env)
 	var rc ResilienceConfig
-	if err := sc.client.Load(key, &rc); err != nil {
+	if err := c.Load(key, &rc); err != nil {
 		return err
 	}
 	ApplyResilience(&rc)
@@ -104,11 +117,11 @@ func (sc *ServiceConfig) LoadResilience() error {
 }
 
 // WatchResilience 在后台长轮询 resilience KV key，变更时即时刷新策略。
-// 阻塞式，应在 goroutine 中调用（如 go sc.WatchResilience()）。
-func (sc *ServiceConfig) WatchResilience() {
-	key := ResilienceKey(sc.service, sc.env)
+// 阻塞式，应在 goroutine 中调用（如 go client.WatchResilience(...)）。
+func (c *Client) WatchResilience(service, env string) {
+	key := ResilienceKey(service, env)
 	var rc ResilienceConfig
-	_ = sc.client.Watch(key, &rc, func() {
+	_ = c.Watch(key, &rc, func() {
 		ApplyResilience(&rc)
 	})
 }
