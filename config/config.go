@@ -24,6 +24,8 @@ type Config struct {
 	Metrics   MetricsConfig   `yaml:"metrics"`    // Prometheus 指标暴露配置
 	RateLimit RateLimitConfig `yaml:"rate_limit"` // 限流配置
 	Server    ServerConfig    `yaml:"server"`     // 入站 server 调优（gRPC/HTTP 超时与 keepalive）
+	CORS      CORSConfig      `yaml:"cors,omitempty"` // CORS 跨域配置（article 等需要 HTTP 直连的服务）
+	Mail      MailConfig      `yaml:"mail,omitempty"` // 邮件配置（user 等需要发信的服务）
 }
 
 type AppConfig struct {
@@ -134,6 +136,29 @@ type RateLimitConfig struct {
 	Enabled bool `yaml:"enabled"` // 是否启用限流
 	QPS     int  `yaml:"qps"`     // 每秒允许请求数（速率）
 	Burst   int  `yaml:"burst"`   // 突发容量（瞬时最大放行数）
+}
+
+// CORSConfig 跨域资源共享配置（HTTP 直连调试 / Web 前端调用时需要）。
+// 仅 article 等暴露 HTTP API 的服务会配置此段；其他服务 yaml 不写 cors 时不生效。
+type CORSConfig struct {
+	Enabled          bool     `yaml:"enabled"`           // 是否启用 CORS
+	AllowOrigins     []string `yaml:"allow_origins"`     // 允许的来源
+	AllowMethods     []string `yaml:"allow_methods"`     // 允许的 HTTP 方法
+	AllowHeaders     []string `yaml:"allow_headers"`     // 允许的请求头
+	ExposeHeaders    []string `yaml:"expose_headers"`    // 暴露的响应头
+	AllowCredentials bool     `yaml:"allow_credentials"` // 是否允许携带凭证
+	MaxAge           int      `yaml:"max_age"`           // 预检结果缓存时间（秒）
+}
+
+// MailConfig 邮件（SMTP）配置。
+// 仅 user 等需要发送邮件（注册验证/找回密码）的服务会配置此段；其他服务 yaml 不写 mail 时不生效。
+type MailConfig struct {
+	SMTPHost     string `yaml:"smtp_host"`     // SMTP 服务器地址
+	SMTPPort     int    `yaml:"smtp_port"`     // SMTP 端口（默认 587）
+	SMTPUsername string `yaml:"smtp_username"` // 登录用户名
+	SMTPPassword string `yaml:"smtp_password"` // 登录密码
+	FromAddress  string `yaml:"from_address"`  // 发件人地址（默认 noreply@blog.local）
+	UseTLS       bool   `yaml:"use_tls"`       // 是否使用 TLS
 }
 
 // Load 加载配置文件
@@ -309,6 +334,12 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.RateLimit.Burst == 0 {
 		c.RateLimit.Burst = 2000
+	}
+	if c.Mail.SMTPPort == 0 {
+		c.Mail.SMTPPort = 587
+	}
+	if c.Mail.FromAddress == "" {
+		c.Mail.FromAddress = "noreply@blog.local"
 	}
 	// 入站 server 调优默认值（与 constants 中的历史默认值保持一致）。
 	if c.Server.GRPC.DefaultTimeoutSec == 0 {
