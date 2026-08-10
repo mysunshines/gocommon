@@ -6,24 +6,32 @@ import (
 	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/middleware"
+	"github.com/mysunshines/gocommon/resilience"
 )
 
 // HotConfig 是需要线上热更新、从配置后台即时下发的业务配置聚合。
 //
 // 设计原则：只放"在线上确实需要不改发版就能调"的配置。当前纳入：
 //   - LogLevel：线上临时调 debug 排查，事后调回（无需重启生效）
-//   - RateLimit：限流阈值，应对突发流量/异常调用最常调整
+//   - RateLimit：入站限流阈值，应对突发流量/异常调用最常调整（别人调我）
 //   - JWTExpireTime：登录时效
+//   - Resilience：出站韧性策略，按下游 serviceKey 分别配置超时/熔断/限流（我调别人）
 //
 // 基础设施配置（Database / Redis / Consul 地址与连接池）不在此列，
 // 因为它们往往需重建连接或重启才安全，仍走 config_xxx.yaml + 环境变量。
 //
-// 字段刻意复用 config 包的既有类型（如 RateLimitConfig），保持单一数据来源，
-// 后台写入的 YAML 字段名与 config.yaml 中对应段一致，降低运维心智负担。
+// 字段刻意复用 config/resilience 包的既有类型，保持单一数据来源，
+// 后台写入的 YAML 字段名与各包一致，降低运维心智负担。
+//
+// 关于 RateLimit 与 Resilience 的语义区分：
+//   - RateLimit(config.RateLimitConfig)：本服务的入站总限流（被调用方，一个总阈值）；
+//   - Resilience(map[serviceKey]PolicySpec)：本服务对每个下游的出站韧性（调用方，按下游隔离）。
+// 二者方向相反，在同一份 YAML 中并列、互不污染。
 type HotConfig struct {
-	LogLevel      string                 `yaml:"log_level" json:"log_level"`
-	RateLimit     config.RateLimitConfig `yaml:"rate_limit" json:"rate_limit"`
-	JWTExpireTime int                    `yaml:"jwt_expire_time" json:"jwt_expire_time"`
+	LogLevel      string                          `yaml:"log_level" json:"log_level"`
+	RateLimit     config.RateLimitConfig          `yaml:"rate_limit" json:"rate_limit"`
+	JWTExpireTime int                             `yaml:"jwt_expire_time" json:"jwt_expire_time"`
+	Resilience    map[string]resilience.PolicySpec `yaml:"resilience" json:"resilience"`
 }
 
 // ServiceConfig 是单个服务接入配置中心的句柄：持有最新热更配置快照，
@@ -110,11 +118,18 @@ func (sc *ServiceConfig) apply(hc *HotConfig) {
 	// 全局 config 已更新，但已初始化好的限流器实例仍是旧阈值，
 	// 需显式刷新实例级 QPS/Burst，否则热更不会真正生效。
 	middleware.UpdateRateLimiter(&hc.RateLimit)
+
+	// 出站韧性策略：将 YAML 中的各下游 PolicySpec 转换为运行时 Policy 并即时生效。
+	// 缺失或不传 Resilience 时，出站调用回落到 resilience 默认策略（仅超时，不熔断/限流）。
+	if len(hc.Resilience) > 0 {
+		resilience.ApplySpecs(hc.Resilience)
+	}
+
 	if hc.JWTExpireTime > 0 {
 		c.JWT.ExpireTime = hc.JWTExpireTime
 	}
-	log.Infof("configcenter: applied hot config for %s/%s (log_level=%s qps=%d burst=%d jwt=%ds)",
-		sc.service, sc.env, hc.LogLevel, hc.RateLimit.QPS, hc.RateLimit.Burst, hc.JWTExpireTime)
+	log.Infof("configcenter: applied hot config for %s/%s (log_level=%s qps=%d burst=%d jwt=%ds resilience=%d)",
+		sc.service, sc.env, hc.LogLevel, hc.RateLimit.QPS, hc.RateLimit.Burst, hc.JWTExpireTime, len(hc.Resilience))
 }
 
 // Get 返回当前最新的热更配置快照（线程安全，无锁读取）。
