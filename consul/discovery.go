@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,17 +168,13 @@ func RegisterAlias(alias, consulService string) {
 // 使 grpcclient.SendRequest 不再依赖手写死地址 RegisterService，而是从 Consul
 // 动态发现目标实例。consulAddr 为 Consul Agent 地址（如 "consul:8500"）。
 //
-// 调用前需先用 RegisterAlias 声明别名映射；解析时若未找到映射则尝试直接用 alias 作为
-// Consul 服务名（兼容注册名与 proto 服务名一致的情况）。内部启动后台刷新 goroutine。
+// 解析时优先使用 RegisterAlias 显式声明；否则按命名约定自动推导
+// （user.v1.UserService → user-service），与网关及服务注册名保持一致；
+// 再不行才用 alias 本身作为 Consul 服务名。内部启动后台刷新 goroutine。
 func UseConsulDiscovery(consulAddr string) {
 	disc := NewDiscovery(consulAddr, 0)
 	grpcclient.SetServiceResolver(func(alias string) (*grpcclient.ServiceEntry, bool) {
-		aliasMu.RLock()
-		svc, ok := aliasToService[alias]
-		aliasMu.RUnlock()
-		if !ok {
-			svc = alias // 兜底：直接用 alias 作为 consul 服务名
-		}
+		svc := resolveConsulService(alias)
 		target, err := disc.Resolve(svc)
 		if err != nil {
 			log.Warnf("consul discovery: resolve %q -> %q failed: %v", alias, svc, err)
@@ -190,4 +187,25 @@ func UseConsulDiscovery(consulAddr string) {
 	})
 	go disc.Run(make(chan struct{})) // 常驻后台刷新；进程退出随之结束
 	log.Infof("consul: service discovery enabled for grpcclient via %s", consulAddr)
+}
+
+// resolveConsulService 将 grpcclient 传入的 proto 全限定服务名（alias）映射为
+// Consul 注册的服务名。优先级：
+//  1. 显式 RegisterAlias 声明（如 proto 服务名与 Consul 名无规律时）；
+//  2. 命名约定自动推导：取 alias 首段（包名，如 user.v1.UserService → user）
+//     转为小写并追加 "-service"（user → user-service），与网关 DeriveGRPCService
+//     及服务注册时的 cfg.App.Name 保持一致，实现零配置服务发现；
+//  3. 兜底：直接用 alias 作为 Consul 服务名（兼容注册名与 proto 名恰好一致的情况）。
+func resolveConsulService(alias string) string {
+	aliasMu.RLock()
+	if svc, ok := aliasToService[alias]; ok {
+		aliasMu.RUnlock()
+		return svc
+	}
+	aliasMu.RUnlock()
+
+	if idx := strings.Index(alias, "."); idx > 0 {
+		return strings.ToLower(alias[:idx]) + "-service"
+	}
+	return alias
 }
