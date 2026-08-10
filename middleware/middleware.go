@@ -501,6 +501,19 @@ func TimeoutMiddleware(timeout time.Duration) gin.HandlerFunc {
 	}
 }
 
+// TimeoutMiddlewareDefault 与 TimeoutMiddleware 等价，但超时值取自
+// goconfig.Get().Server.HTTP.DefaultTimeoutSec，每次请求读取，
+// 因此支持通过 configcenter 热更而无需重启进程。
+func TimeoutMiddlewareDefault() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		timeout := time.Duration(config.Get().Server.HTTP.DefaultTimeoutSec) * time.Second
+		ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
+
 func ValidateRequestMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodPost || c.Request.Method == http.MethodPut || c.Request.Method == http.MethodPatch {

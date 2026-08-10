@@ -261,6 +261,7 @@ type HTTPInboundConfig struct {
 	ReadHeaderTimeoutSec int `yaml:"read_header_timeout_sec"` // 读取请求头超时
 	WriteTimeoutSec      int `yaml:"write_timeout_sec"`       // 写入响应超时
 	IdleTimeoutSec       int `yaml:"idle_timeout_sec"`        // 空闲连接超时
+	DefaultTimeoutSec    int `yaml:"default_timeout_sec"`     // 中间件整体请求超时（秒），TimeoutMiddlewareDefault 每次请求读取，可热更
 }
 
 // ApplyDefaults 为配置填充默认值（供各服务复用）
@@ -374,6 +375,9 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.Server.HTTP.IdleTimeoutSec == 0 {
 		c.Server.HTTP.IdleTimeoutSec = constants.DefaultIdleTimeout
+	}
+	if c.Server.HTTP.DefaultTimeoutSec == 0 {
+		c.Server.HTTP.DefaultTimeoutSec = constants.DefaultHTTPRequestTimeout
 	}
 }
 

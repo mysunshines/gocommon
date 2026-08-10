@@ -104,6 +104,9 @@ const (
 
 	// DefaultIdleTimeout HTTP 空闲连接默认超时 (秒)
 	DefaultIdleTimeout = 120
+
+	// DefaultHTTPRequestTimeout HTTP 中间件整体请求默认超时 (秒)
+	DefaultHTTPRequestTimeout = 30
 )
 
 // ============================================================================
