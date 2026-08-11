@@ -262,16 +262,38 @@ func (d *Discovery) GetHealthyInstances(ctx context.Context, service string) ([]
 
 // Pick 返回指定服务的一个可用实例：优先随机挑选健康实例，
 // 健康实例为空（或健康查询失败）时回退到全量实例，两者皆空才返回错误。
+//
+// 注意降级语义：当 Consul 健康查询成功但返回 0 个健康实例（即全部不健康）时，
+// 会回退到全量实例并挑选其一，但会记 Warn 告警——避免把流量静默路由到已知
+// 不健康的实例而无人察觉。Consul 完全不可达（健康查询失败）时同样降级全量，
+// 保证容错（宁可发坏实例也不整体不可用）。
 func (d *Discovery) Pick(ctx context.Context, service string) (*Instance, error) {
-	instances, err := d.GetHealthyInstances(ctx, service)
-	if err != nil || len(instances) == 0 {
-		instances, err = d.GetInstances(ctx, service)
-		if err != nil {
-			return nil, err
-		}
+	healthy, herr := d.GetHealthyInstances(ctx, service)
+	if herr == nil && len(healthy) > 0 {
+		return healthy[rand.Intn(len(healthy))], nil
+	}
+
+	// 健康查询失败或健康实例为空：降级到全量实例。
+	instances, err := d.GetInstances(ctx, service)
+	if err != nil {
+		return nil, err
 	}
 	if len(instances) == 0 {
 		return nil, fmt.Errorf("consul discovery: no available instance for service %q", service)
+	}
+	if herr != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: middleware.GetTraceIDFromContext(ctx),
+			"service":                 service,
+			"err":                     herr.Error(),
+			"fallback":                len(instances),
+		}).Warnf("[consul:discovery] health query failed, fallback to all instances")
+	} else {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: middleware.GetTraceIDFromContext(ctx),
+			"service":                 service,
+			"fallback":                len(instances),
+		}).Warnf("[consul:discovery] no healthy instance, fallback to all instances (incl. unhealthy)")
 	}
 	return instances[rand.Intn(len(instances))], nil
 }
