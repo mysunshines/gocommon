@@ -324,7 +324,7 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 			"err":                     execErr.Error(),
 		}
 		if c.dumpBodies {
-			fields["req_body"] = string(reqBody)
+			fields["req_body"] = string(compactJSON(reqBody))
 		}
 		log.WithFields(fields).Errorf("[httpclient] request failed")
 		return nil, fmt.Errorf("request failed: %w", execErr)
@@ -343,7 +343,7 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 			"err":                     err.Error(),
 		}
 		if c.dumpBodies {
-			fields["req_body"] = string(reqBody)
+			fields["req_body"] = string(compactJSON(reqBody))
 		}
 		log.WithFields(fields).Errorf("[httpclient] read response failed")
 		return nil, fmt.Errorf("read response failed: %w", err)
@@ -357,8 +357,8 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		"duration":                time.Since(start).String(),
 	}
 	if c.dumpBodies {
-		fields["req_body"] = string(reqBody)
-		fields["resp_body"] = string(body)
+		fields["req_body"] = string(compactJSON(reqBody))
+		fields["resp_body"] = string(compactJSON(body))
 	}
 	log.WithFields(fields).Debugf("[httpclient] request completed")
 	return &Response{
@@ -366,6 +366,17 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		Headers:    resp.Header,
 		Body:       body,
 	}, nil
+}
+
+// compactJSON 将可能为 pretty-print 的 JSON 字节压缩成单行紧凑形式（仍是合法 JSON）。
+// 非 JSON 内容（解析失败）原样返回，避免破坏日志。用于把响应体记录进日志时
+// 去掉 Consul 等接口自带的缩进与换行，避免日志中出现大量转义 \n 噪声。
+func compactJSON(b []byte) []byte {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, b); err != nil {
+		return b
+	}
+	return buf.Bytes()
 }
 
 // Unmarshal 解析响应体为 JSON
