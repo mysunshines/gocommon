@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,6 +125,15 @@ func (s *SlowQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() 
 	sql, rows := fc()
 	traceID := middleware.GetTraceIDFromContext(ctx)
 
+	// 每次 SQL 都计入 DB 操作总量（按 SQL 前缀粗分），驱动 db_operations_total 指标。
+	// 必须在最开头（含 early return 之前）统计，确保全部 SQL 都被计数。
+	op := classifySQL(sql)
+	status := "success"
+	if err != nil && err != gorm.ErrRecordNotFound {
+		status = "error"
+	}
+	metrics.RecordDBOperation(op, status)
+
 	// 出错时始终记录（不受 LogLevel 过滤），便于通过 traceID 排查
 	if err != nil {
 		log.Errorf("[MySQL] traceID=%v | sql=%s | duration=%v | err=%v",
@@ -176,4 +186,21 @@ func Transaction(fn TxFunc) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		return fn(tx)
 	})
+}
+
+// classifySQL 按 SQL 前缀粗分操作类型，用于 db_operations_total 的 operation label。
+func classifySQL(sql string) string {
+	s := strings.TrimSpace(strings.ToUpper(sql))
+	switch {
+	case strings.HasPrefix(s, "SELECT"):
+		return "query"
+	case strings.HasPrefix(s, "INSERT"):
+		return "insert"
+	case strings.HasPrefix(s, "UPDATE"):
+		return "update"
+	case strings.HasPrefix(s, "DELETE"):
+		return "delete"
+	default:
+		return "other"
+	}
 }

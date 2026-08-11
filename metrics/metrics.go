@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"runtime"
 	"strconv"
 	"sync"
@@ -28,6 +29,15 @@ var (
 	cacheOperations    *prometheus.CounterVec
 	dbOperations       *prometheus.CounterVec
 	serviceHealth      *prometheus.GaugeVec
+
+	// 网关层指标（dashboard gateway.json 引用）
+	gatewayRequestsTotal     *prometheus.CounterVec
+	gatewayErrorsTotal       *prometheus.CounterVec
+	gatewayActiveConnections prometheus.Gauge
+	gatewayUpstreamDuration  *prometheus.HistogramVec
+
+	// 报表生成计数（dashboard report-service.json 引用 report_generated_total）
+	reportGeneratedTotal *prometheus.CounterVec
 
 	once sync.Once
 )
@@ -149,6 +159,46 @@ func Init() {
 			},
 			[]string{"service"},
 		)
+
+		// 网关层指标（dashboard gateway.json 引用）
+		gatewayRequestsTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_requests_total",
+				Help: "Total number of requests handled by the gateway",
+			},
+			[]string{"method", "endpoint", "status"},
+		)
+
+		gatewayErrorsTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_errors_total",
+				Help: "Total number of gateway errors",
+			},
+			[]string{"type"},
+		)
+
+		gatewayActiveConnections = promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_active_connections",
+			Help: "Number of active upstream connections held by the gateway",
+		})
+
+		gatewayUpstreamDuration = promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "gateway_upstream_duration_seconds",
+				Help:    "Gateway upstream (backend) latency in seconds",
+				Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+			},
+			[]string{"service", "endpoint"},
+		)
+
+		// 报表生成计数（dashboard report-service.json 引用 report_generated_total）
+		reportGeneratedTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "report_generated_total",
+				Help: "Total number of reports generated",
+			},
+			[]string{"type"},
+		)
 	})
 }
 
@@ -213,4 +263,89 @@ func SetServiceHealth(service string, healthy bool) {
 	} else {
 		serviceHealth.WithLabelValues(service).Set(0.0)
 	}
+}
+
+// ---- 网关层指标便捷函数（供 gateway proxy handler 埋点） ----
+
+// RecordGatewayRequest 记录网关处理的请求数（按 method/endpoint/status）。
+func RecordGatewayRequest(method, endpoint string, status int) {
+	gatewayRequestsTotal.WithLabelValues(method, endpoint, strconv.Itoa(status)).Inc()
+}
+
+// RecordGatewayError 记录网关错误数（按错误类型）。
+func RecordGatewayError(errType string) {
+	gatewayErrorsTotal.WithLabelValues(errType).Inc()
+}
+
+// GatewayConnInc/Dec 维护网关活跃上游连接数（Gauge）。
+func GatewayConnInc() { gatewayActiveConnections.Inc() }
+func GatewayConnDec() { gatewayActiveConnections.Dec() }
+
+// RecordGatewayUpstreamLatency 记录网关到后端的转发延迟。
+func RecordGatewayUpstreamLatency(service, endpoint string, duration time.Duration) {
+	gatewayUpstreamDuration.WithLabelValues(service, endpoint).Observe(duration.Seconds())
+}
+
+// RecordReportGenerated 记录报表生成次数（供 report-service 调用）。
+func RecordReportGenerated(reportType string) {
+	reportGeneratedTotal.WithLabelValues(reportType).Inc()
+}
+
+// ---- P1：让"已注册但无 series"的指标真正产出数据 ----
+
+// StartRuntimeMetrics 启动一个定时 ticker，周期性刷新内存/goroutine 指标，
+// 解决 memory_usage_bytes / goroutine_count 长期为 0 的问题。各服务 main 调一次即可。
+func StartRuntimeMetrics(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	UpdateSystemMetrics() // 立即采集一次
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				UpdateSystemMetrics()
+			}
+		}
+	}()
+}
+
+// StartHealthReporter 启动一个定时 ticker，周期性探测 DB/Redis 可用性并上报
+// service_health 指标，解决 dashboard 服务健康 panel 长期 No data 的问题。
+// dbPing / redisPing 可为 nil（跳过对应探测）。各服务 main 调一次即可。
+func StartHealthReporter(ctx context.Context, serviceName string, interval time.Duration, dbPing func() error, redisPing func() error) {
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	probe := func() bool {
+		healthy := true
+		if dbPing != nil {
+			if err := dbPing(); err != nil {
+				healthy = false
+			}
+		}
+		if redisPing != nil {
+			if err := redisPing(); err != nil {
+				healthy = false
+			}
+		}
+		return healthy
+	}
+	SetServiceHealth(serviceName, probe()) // 立即探测一次
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				SetServiceHealth(serviceName, probe())
+			}
+		}
+	}()
 }

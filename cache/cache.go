@@ -9,6 +9,7 @@ import (
 	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/metrics"
 	"github.com/mysunshines/gocommon/middleware"
 
 	"github.com/go-redis/redis/v8"
@@ -134,12 +135,14 @@ func Get(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("redis not initialized")
 	}
 	val, err := rdb.Get(ctx, GetKey(key)).Result()
-	// Get 的 key miss (redis.Nil) 不算错误，以 Debug 记录即可
+	// Get 的 key miss (redis.Nil) 不算错误；命中与否上报 redis_hit_rate 指标。
+	hit := err == nil
 	if err != nil && err != redis.Nil {
 		logRedisOp(ctx, "GET", key, err)
 	} else {
 		logRedisOp(ctx, "GET", key, nil)
 	}
+	metrics.RecordRedisHit(hit)
 	return val, err
 }
 
