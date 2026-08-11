@@ -392,6 +392,40 @@ func JWTValidMiddleware() gin.HandlerFunc {
 	}
 }
 
+// UserContextMiddleware 解析并提取 JWT 中的用户身份信息（user_id/username/role）
+// 注入 gin.Context，供后续 LoggingMiddleware 等记录，但不拦截请求：token 缺失或
+// 校验失败时仅跳过提取，请求仍放行。鉴权职责仍由下游服务 / 显式 JWTValidMiddleware 承担。
+// 典型用途：在网关层统一把 userId 写入访问日志，而不强制所有路由鉴权。
+func UserContextMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.Next()
+			return
+		}
+		tokenStr, ok := strings.CutPrefix(authHeader, constants.JWTAuthScheme)
+		if !ok {
+			c.Next()
+			return
+		}
+		claims, err := parseJWTClaims(tokenStr)
+		if err != nil {
+			c.Next()
+			return
+		}
+		if uid, ok := claims["user_id"]; ok {
+			c.Set(UserIDContextKey, uid)
+		}
+		if uname, ok := claims["username"]; ok {
+			c.Set(UsernameContextKey, uname)
+		}
+		if role, ok := claims["role"]; ok {
+			c.Set(RoleContextKey, role)
+		}
+		c.Next()
+	}
+}
+
 // AdminOnlyMiddleware 仅允许管理员访问。
 // 依赖前置的 JWTValidMiddleware 已将 role 注入 gin.Context（见 RoleContextKey）。
 // JWT 中数字声明默认解析为 float64，这里做类型兼容。
