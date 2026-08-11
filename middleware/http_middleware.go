@@ -13,90 +13,17 @@ import (
 	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
-	"github.com/mysunshines/gocommon/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/time/rate"
 )
 
-type RateLimiter struct {
-	// limiters 按 key（通常为客户端 IP）缓存各自的令牌桶限流器。
-	// 每个 key 独立限流，首次访问时惰性创建（见 GetLimiter）。
-	limiters map[string]*rate.Limiter
-	// mu 保护对 limiters map 的并发读写（新建/查询限流器时会加锁）。
-	mu sync.RWMutex
-	// rps 新建限流器时使用的速率（每秒允许的平均请求数，rate.Limit 即 float64）。
-	rps rate.Limit
-	// burst 新建限流器时允许的突发容量（令牌桶可积攒的最大令牌数，即瞬时最大放行请求数）。
-	burst int
-}
-
-func NewRateLimiter(rps int, burst int) *RateLimiter {
-	return &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
-		rps:      rate.Limit(rps),
-		burst:    burst,
-	}
-}
-
-func (rl *RateLimiter) GetLimiter(key string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	if limiter, ok := rl.limiters[key]; ok {
-		return limiter
-	}
-	limiter := rate.NewLimiter(rl.rps, rl.burst)
-	rl.limiters[key] = limiter
-	return limiter
-}
-
-func (rl *RateLimiter) Allow(key string) bool {
-	limiter := rl.GetLimiter(key)
-	return limiter.Allow()
-}
-
-// SetLimit 动态更新限流阈值：既更新后续新建限流器的默认值，也即时刷新
-// 所有已存在的限流器（已缓存的令牌桶），实现阈值热更无需重启。
-func (rl *RateLimiter) SetLimit(rps int, burst int) {
-	rl.mu.Lock()
-	rl.rps = rate.Limit(rps)
-	rl.burst = burst
-	for _, limiter := range rl.limiters {
-		limiter.SetLimit(rl.rps)
-		limiter.SetBurst(rl.burst)
-	}
-	rl.mu.Unlock()
-}
-
 var (
-	rateLimiter *RateLimiter
-	limiterOnce sync.Once
-
 	jwtSecret string
 	jwtOnce   sync.Once
 )
 
-func InitRateLimiter(cfg *config.RateLimitConfig) {
-	limiterOnce.Do(func() {
-		if cfg.Enabled {
-			rateLimiter = NewRateLimiter(cfg.QPS, cfg.Burst)
-		}
-	})
-}
-
-// UpdateRateLimiter 动态调整已初始化限流器的阈值（供配置中心热更即时生效）。
-// 仅在 InitRateLimiter 已初始化限流器后有效；若尚未初始化或配置关闭，则忽略。
-func UpdateRateLimiter(cfg *config.RateLimitConfig) {
-	if rateLimiter == nil {
-		return
-	}
-	if !cfg.Enabled {
-		return
-	}
-	rateLimiter.SetLimit(cfg.QPS, cfg.Burst)
-}
-
+// InitJWT 初始化 JWT 签名密钥（幂等），供 AuthMiddleware / CSRFMiddleware 解析令牌使用。
 func InitJWT(secret string) {
 	jwtOnce.Do(func() {
 		jwtSecret = secret
@@ -438,52 +365,6 @@ func AdminOnlyMiddleware() gin.HandlerFunc {
 	}
 }
 
-func GetUserIDFromContext(c *gin.Context) (uint, error) {
-	userID, exists := c.Get(UserIDContextKey)
-	if !exists {
-		return 0, nil
-	}
-	switch v := userID.(type) {
-	case uint:
-		return v, nil
-	case float64:
-		return uint(v), nil
-	case string:
-		id, _ := strconv.ParseUint(v, 10, 64)
-		return uint(id), nil
-	default:
-		return 0, jwt.ErrTokenInvalidClaims
-	}
-}
-
-func GetUsernameFromContext(c *gin.Context) string {
-	username, exists := c.Get(UsernameContextKey)
-	if !exists {
-		return ""
-	}
-	if name, ok := username.(string); ok {
-		return name
-	}
-	return ""
-}
-
-type contextKey string
-
-const UserIDKey contextKey = "user_id"
-
-// UserIDContextKey 用于 gin.Context.Set/Get 的 string 键
-// 与 UserIDKey 值相同，但类型为 string，可直接用于 gin.Context
-const UserIDContextKey = "user_id"
-
-// UsernameContextKey 用于 gin.Context.Set/Get 的 string 键
-const UsernameContextKey = "username"
-
-// RoleContextKey 用于 gin.Context.Set/Get 的 string 键
-const RoleContextKey = "role"
-
-// traceIDKey 用于 context.Context 存储 traceID，仅在包内使用。
-const traceIDKey contextKey = "trace_id"
-
 func ContextMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -547,49 +428,4 @@ func TraceMiddleware() gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
-}
-
-// GetTraceIDFromContext 从 context.Context 中提取链路追踪 traceID。
-// MySQL/Redis/gRPC 拦截器等非 HTTP Handler 代码通过此函数获取 traceID 打印日志。
-// 若未设置则返回空串，调用方自行降级处理。
-func GetTraceIDFromContext(ctx context.Context) string {
-	v, ok := ctx.Value(traceIDKey).(string)
-	if !ok {
-		return ""
-	}
-	return v
-}
-
-// SetTraceIDToContext 将 traceID 写入 context.Context，返回新的 context。
-// 主要用于 gRPC 拦截器从 metadata 提取 traceID 后注入 context，后续链路可统一获取。
-func SetTraceIDToContext(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, traceIDKey, traceID)
-}
-
-func generateTraceID() string {
-	return time.Now().Format(constants.DateTimeCompact) + "-" + util.GenerateRandomString(8)
-}
-
-// GRPCMethodTimeout 根据 gRPC 方法全名返回入站请求超时时间。
-// 读取全局 config 的 Server.GRPC 段：列表/搜索/批量等慢方法（命中 SlowMethods 后缀）
-// 给予 DefaultTimeoutSec * SlowMultiplier 的更长超时，避免被统一短超时误杀；
-// 其余走 DefaultTimeoutSec。该配置由 HotConfig 热更写回，无需重启即可调整超时。
-//
-// 各服务的 grpcUnaryInterceptor 直接调用本函数替代原先硬编码的 grpcMethodTimeout。
-func GRPCMethodTimeout(fullMethod string) time.Duration {
-	g := config.Get().Server.GRPC
-	base := time.Duration(g.DefaultTimeoutSec) * time.Second
-	if base <= 0 {
-		base = constants.DefaultGRPCUnaryTimeout * time.Second
-	}
-	mult := g.SlowMultiplier
-	if mult <= 0 {
-		mult = 2
-	}
-	for _, suffix := range g.SlowMethods {
-		if strings.HasSuffix(fullMethod, suffix) {
-			return time.Duration(float64(base) * mult)
-		}
-	}
-	return base
 }

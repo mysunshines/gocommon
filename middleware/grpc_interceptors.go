@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
@@ -67,4 +68,28 @@ func GRPCLoggingInterceptor() grpc.UnaryServerInterceptor {
 		}
 		return resp, err
 	}
+}
+
+// GRPCMethodTimeout 根据 gRPC 方法全名返回入站请求超时时间。
+// 读取全局 config 的 Server.GRPC 段：列表/搜索/批量等慢方法（命中 SlowMethods 后缀）
+// 给予 DefaultTimeoutSec * SlowMultiplier 的更长超时，避免被统一短超时误杀；
+// 其余走 DefaultTimeoutSec。该配置由 HotConfig 热更写回，无需重启即可调整超时。
+//
+// 各服务的 grpcUnaryInterceptor 直接调用本函数替代原先硬编码的 grpcMethodTimeout。
+func GRPCMethodTimeout(fullMethod string) time.Duration {
+	g := config.Get().Server.GRPC
+	base := time.Duration(g.DefaultTimeoutSec) * time.Second
+	if base <= 0 {
+		base = constants.DefaultGRPCUnaryTimeout * time.Second
+	}
+	mult := g.SlowMultiplier
+	if mult <= 0 {
+		mult = 2
+	}
+	for _, suffix := range g.SlowMethods {
+		if strings.HasSuffix(fullMethod, suffix) {
+			return time.Duration(float64(base) * mult)
+		}
+	}
+	return base
 }
