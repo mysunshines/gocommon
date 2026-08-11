@@ -162,6 +162,9 @@ const (
 	// ServiceNameGateway 网关服务名
 	ServiceNameGateway = "gateway"
 
+	// ServiceNameReport 报表服务名
+	ServiceNameReport = "report-service"
+
 	// RedisKeyPrefixUser 用户服务 Redis Key 前缀
 	RedisKeyPrefixUser = "user-service:"
 

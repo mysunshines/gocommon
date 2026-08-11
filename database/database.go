@@ -180,6 +180,18 @@ func Close() error {
 	return nil
 }
 
+// Ping 探测数据库连接可用性，供 metrics.StartHealthReporter 等健康上报使用。
+func Ping(ctx context.Context) error {
+	if db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+}
+
 type TxFunc func(*gorm.DB) error
 
 func Transaction(fn TxFunc) error {
