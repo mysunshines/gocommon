@@ -1952,8 +1952,8 @@ r.Use(middleware.CORSMiddleware())
 // Panic 恢复
 r.Use(middleware.RecoveryMiddleware())
 
-// JWT 认证
-r.Use(middleware.JWTValidMiddleware())
+// JWT 认证（鉴权模式：缺失/无效 token 返回 401）
+r.Use(middleware.AuthMiddleware(true))
 
 // 上下文传播（将 JWT 中的 user_id 注入 context）
 r.Use(middleware.ContextMiddleware())
@@ -1985,7 +1985,7 @@ func handler(c *gin.Context) {
         TraceMiddleware (X-Trace-ID)
           CORSMiddleware
             RecoveryMiddleware (defer + recover)
-              JWTValidMiddleware (解析令牌)
+              AuthMiddleware (解析令牌)
                 ContextMiddleware (注入 context)
                   LoggingMiddleware
                     MetricsMiddleware
@@ -2046,7 +2046,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 ```
 Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
-JWTValidMiddleware(c):
+AuthMiddleware(true)(c):
   1. 提取 Header: c.GetHeader("Authorization")
   2. 校验格式: "Bearer <token>"
   3. 解析 JWT: jwt.Parse(tokenString, keyFunc)
