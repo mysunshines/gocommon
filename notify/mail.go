@@ -4,6 +4,7 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -11,6 +12,12 @@ import (
 	"net/smtp"
 	"strings"
 	"time"
+
+	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Image 表示一封邮件中的内联图片，HTML 中通过 <img src="cid:<CID>"> 引用。
@@ -50,8 +57,8 @@ const (
 	boundaryAlternative = "reportALTERNATIVEboundary"
 )
 
-// Send 发送邮件。成功返回 nil。
-func Send(cfg Config, msg Message) error {
+// Send 发送邮件。成功返回 nil。ctx 用于提取 traceID 串联日志。
+func Send(ctx context.Context, cfg Config, msg Message) error {
 	from := firstNonEmpty(msg.From, cfg.From)
 	if from == "" {
 		return fmt.Errorf("notify: missing sender address")
@@ -99,7 +106,32 @@ func Send(cfg Config, msg Message) error {
 	}
 
 	recipients := append(append([]string{}, msg.To...), msg.Cc...)
-	return sendSMTP(cfg, from, recipients, buf.Bytes())
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"from":                    from,
+		"to":                      strings.Join(recipients, ","),
+		"subject":                 msg.Subject,
+		"images":                  len(msg.Images),
+	}).Infof("[notify] sending mail")
+	err := sendSMTP(ctx, cfg, from, recipients, buf.Bytes())
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"from":                    from,
+			"to":                      strings.Join(recipients, ","),
+			"subject":                 msg.Subject,
+			"err":                     err.Error(),
+		}).Errorf("[notify] send mail failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"from":                    from,
+		"to":                      strings.Join(recipients, ","),
+		"subject":                 msg.Subject,
+	}).Infof("[notify] mail sent")
+	return nil
 }
 
 func writeAlternative(buf *bytes.Buffer, msg Message) {
@@ -115,7 +147,8 @@ func writeAlternative(buf *bytes.Buffer, msg Message) {
 	}
 }
 
-func sendSMTP(cfg Config, from string, to []string, data []byte) error {
+func sendSMTP(ctx context.Context, cfg Config, from string, to []string, data []byte) error {
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	var auth smtp.Auth
 	if cfg.Username != "" {
@@ -125,38 +158,88 @@ func sendSMTP(cfg Config, from string, to []string, data []byte) error {
 	if cfg.UseTLS {
 		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: cfg.Host})
 		if err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"addr":                    addr,
+				"err":                     err.Error(),
+			}).Errorf("[notify] tls dial failed")
 			return fmt.Errorf("notify: tls dial %s failed: %w", addr, err)
 		}
 		defer conn.Close()
 		c, err := smtp.NewClient(conn, cfg.Host)
 		if err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"addr":                    addr,
+				"err":                     err.Error(),
+			}).Errorf("[notify] smtp client failed")
 			return fmt.Errorf("notify: smtp client failed: %w", err)
 		}
 		defer c.Quit()
 		if auth != nil {
 			if err := c.Auth(auth); err != nil {
+				log.WithFields(logrus.Fields{
+					constants.LogFieldTraceID: traceID,
+					"addr":                    addr,
+					"err":                     err.Error(),
+				}).Errorf("[notify] smtp auth failed")
 				return fmt.Errorf("notify: smtp auth failed: %w", err)
 			}
 		}
 		if err := c.Mail(from); err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"from":                    from,
+				"err":                     err.Error(),
+			}).Errorf("[notify] smtp MAIL FROM failed")
 			return fmt.Errorf("notify: smtp MAIL FROM failed: %w", err)
 		}
 		for _, rcpt := range to {
 			if err := c.Rcpt(rcpt); err != nil {
+				log.WithFields(logrus.Fields{
+					constants.LogFieldTraceID: traceID,
+					"rcpt":                    rcpt,
+					"err":                     err.Error(),
+				}).Errorf("[notify] smtp RCPT failed")
 				return fmt.Errorf("notify: smtp RCPT %s failed: %w", rcpt, err)
 			}
 		}
 		w, err := c.Data()
 		if err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"err":                     err.Error(),
+			}).Errorf("[notify] smtp DATA failed")
 			return fmt.Errorf("notify: smtp DATA failed: %w", err)
 		}
 		if _, err := w.Write(data); err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"err":                     err.Error(),
+			}).Errorf("[notify] write mail body failed")
 			return fmt.Errorf("notify: write mail body failed: %w", err)
 		}
-		return w.Close()
+		if err := w.Close(); err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"err":                     err.Error(),
+			}).Errorf("[notify] close mail data failed")
+			return err
+		}
+		return nil
 	}
 
-	return smtp.SendMail(addr, auth, from, to, data)
+	if err := smtp.SendMail(addr, auth, from, to, data); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    addr,
+			"from":                    from,
+			"to":                      strings.Join(to, ","),
+			"err":                     err.Error(),
+		}).Errorf("[notify] smtp SendMail failed")
+		return err
+	}
+	return nil
 }
 
 func formatAddr(name, addr string) string {

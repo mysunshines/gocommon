@@ -13,7 +13,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Sample 表示一个时间点上的采样值。
@@ -96,19 +100,48 @@ func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("prometheus: build request failed: %w", err)
 	}
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"query":                   q.Get("query"),
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[prometheus] query failed")
 		return nil, fmt.Errorf("prometheus: query %q failed: %w", q.Get("query"), err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[prometheus] read response failed")
 		return nil, fmt.Errorf("prometheus: read response failed: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("prometheus: non-200 response: %s", string(data))
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+			"body":                    truncate(string(data), 256),
+		}).Errorf("[prometheus] unexpected status")
 		return nil, fmt.Errorf("prometheus: unexpected status %d: %s", resp.StatusCode, truncate(string(data), 256))
 	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"url":                     u,
+		"query":                   q.Get("query"),
+		"status":                  resp.StatusCode,
+		"duration":                time.Since(start).String(),
+	}).Debugf("[prometheus] query completed")
 	return data, nil
 }
 

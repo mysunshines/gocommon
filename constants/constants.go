@@ -309,6 +309,10 @@ const (
 	// LogFieldEnv 日志中 env 字段名
 	LogFieldEnv = "env"
 
+	// LogFieldTraceID 日志中 traceID 字段名，所有网络 I/O 日志统一携带该字段，
+	// 便于在日志系统中按 traceID 串联同一请求的跨服务/跨组件调用链。
+	LogFieldTraceID = "traceID"
+
 	// LogInitMsg 日志初始化消息
 	LogInitMsg = "Logger initialized"
 )

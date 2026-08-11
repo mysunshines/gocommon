@@ -22,7 +22,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
+	"github.com/sirupsen/logrus"
 )
 
 // loadTimeout 是 Load/Get（非阻塞首拉）的最长等待时间。
@@ -284,18 +288,42 @@ func (c *Client) currentIndex() uint64 {
 }
 
 // Put 向 Consul KV 写入 key 的 YAML/JSON 值（供管理后台或测试调用）。
-func (c *Client) Put(key string, value []byte) error {
-	req, err := http.NewRequest(http.MethodPut, c.kvPutURL(key), bytesReader(value))
+// ctx 用于提取 traceID 串联日志。
+func (c *Client) Put(ctx context.Context, key string, value []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.kvPutURL(key), bytesReader(value))
 	if err != nil {
 		return err
 	}
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"key":                     key,
+			"url":                     c.kvPutURL(key),
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[configcenter] put failed")
 		return fmt.Errorf("configcenter: put %s failed: %w", key, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"key":                     key,
+			"url":                     c.kvPutURL(key),
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+		}).Errorf("[configcenter] put unexpected status")
 		return fmt.Errorf("configcenter: put %s returned status %d", key, resp.StatusCode)
 	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"key":                     key,
+		"url":                     c.kvPutURL(key),
+		"status":                  resp.StatusCode,
+		"duration":                time.Since(start).String(),
+	}).Debugf("[configcenter] put completed")
 	return nil
 }

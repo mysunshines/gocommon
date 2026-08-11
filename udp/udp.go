@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 	"github.com/mysunshines/gocommon/resilience"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client UDP 客户端
@@ -51,6 +55,11 @@ func New(address string, opts ...Option) (*Client, error) {
 	// 解析服务器地址
 	udpAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] resolve address failed")
 		return nil, fmt.Errorf("failed to resolve UDP address: %w", err)
 	}
 
@@ -61,6 +70,11 @@ func New(address string, opts ...Option) (*Client, error) {
 		c.conn, err = net.ListenUDP("udp", nil)
 	}
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] create connection failed")
 		return nil, fmt.Errorf("failed to create UDP connection: %w", err)
 	}
 
@@ -143,8 +157,14 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 	c.applyDeadlines(conn)
 
 	// 发送数据
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] send failed")
 		return fmt.Errorf("send failed: %w", err)
 	}
 
@@ -172,8 +192,14 @@ func (c *Client) SendTo(ctx context.Context, address string, data []byte) error 
 
 	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] sendTo failed")
 		return fmt.Errorf("send failed: %w", err)
 	}
 
@@ -197,8 +223,14 @@ func (c *Client) Receive(ctx context.Context) ([]byte, *net.UDPAddr, error) {
 	c.applyDeadlines(conn)
 
 	data := make([]byte, c.bufSize)
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, addr, err := conn.ReadFromUDP(data)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] receive failed")
 		return nil, nil, fmt.Errorf("receive failed: %w", err)
 	}
 
@@ -217,8 +249,14 @@ func (c *Client) ReceiveWithBuffer(ctx context.Context, buf []byte) (int, *net.U
 
 	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, addr, err := conn.ReadFromUDP(buf)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] receiveWithBuffer failed")
 		return 0, nil, fmt.Errorf("receive failed: %w", err)
 	}
 
@@ -270,8 +308,14 @@ func (c *Client) Broadcast(ctx context.Context, port int, data []byte) error {
 		return fmt.Errorf("failed to set write buffer: %w", err)
 	}
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"port":                    port,
+			"err":                     err.Error(),
+		}).Errorf("[udp] broadcast failed")
 		return fmt.Errorf("broadcast failed: %w", err)
 	}
 
@@ -299,8 +343,14 @@ func (c *Client) Multicast(ctx context.Context, multicastAddr string, data []byt
 
 	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"multicast_addr":          multicastAddr,
+			"err":                     err.Error(),
+		}).Errorf("[udp] multicast failed")
 		return fmt.Errorf("multicast failed: %w", err)
 	}
 
@@ -358,6 +408,11 @@ func ServerConn(address string) (*net.UDPConn, error) {
 
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] server listen failed")
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 

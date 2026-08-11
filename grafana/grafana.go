@@ -12,6 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client 是 Grafana 图片渲染客户端。
@@ -127,23 +133,61 @@ func (c *Client) RenderPanel(ctx context.Context, opt PanelOptions) ([]byte, err
 		req.SetBasicAuth(c.user, c.password)
 	}
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"dashboard":               opt.DashboardUID,
+			"panel":                   opt.PanelID,
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[grafana] render request failed")
 		return nil, fmt.Errorf("grafana: render request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[grafana] read response failed")
 		return nil, fmt.Errorf("grafana: read response failed: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+			"body":                    truncate(string(data), 256),
+		}).Errorf("[grafana] unexpected status")
 		return nil, fmt.Errorf("grafana: unexpected status %d: %s", resp.StatusCode, truncate(string(data), 256))
 	}
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
 		// 渲染插件缺失或鉴权失败时通常返回 HTML/JSON，此处直接判定为失败便于排查。
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"url":                     u,
+			"status":                  resp.StatusCode,
+			"content_type":            ct,
+			"duration":                time.Since(start).String(),
+			"body":                    truncate(string(data), 256),
+		}).Errorf("[grafana] unexpected content-type (image-renderer plugin missing or auth failed)")
 		return nil, fmt.Errorf("grafana: unexpected content-type %q (image-renderer plugin missing or auth failed): %s", ct, truncate(string(data), 256))
 	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"url":                     u,
+		"status":                  resp.StatusCode,
+		"duration":                time.Since(start).String(),
+	}).Debugf("[grafana] render completed")
 	return data, nil
 }
 

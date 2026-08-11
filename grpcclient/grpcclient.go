@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/middleware"
 
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -60,7 +62,20 @@ func Dial(target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 		grpc.WithChainUnaryInterceptor(AuthForwardInterceptor()),
 	}
 	all := append(base, opts...)
-	return grpc.NewClient(target, all...)
+	conn, err := grpc.NewClient(target, all...)
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"target":                  target,
+			"err":                     err.Error(),
+		}).Errorf("[grpcclient] dial failed")
+		return nil, err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: "",
+		"target":                  target,
+	}).Infof("[grpcclient] dial configured (lazy connect)")
+	return conn, nil
 }
 
 // AuthForwardInterceptor 返回一元客户端拦截器，用于在服务间调用时透传鉴权身份

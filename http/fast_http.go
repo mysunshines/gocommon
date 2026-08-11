@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 
+	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 )
 
@@ -305,13 +308,29 @@ func (c *FastClient) do(ctx context.Context, req *fasthttp.Request, resp *fastht
 	}
 
 	// 发送请求（fasthttp 不内置 context 支持，用 DoDeadline 模拟）
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
 	err := c.client.DoDeadline(req, resp, deadline)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  string(req.Header.Method()),
+			"url":                     string(req.URI().FullURI()),
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[httpclient:fast] request failed")
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
 	// 检查 context 是否已取消
 	if ctx.Err() != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  string(req.Header.Method()),
+			"url":                     string(req.URI().FullURI()),
+			"duration":                time.Since(start).String(),
+			"err":                     ctx.Err().Error(),
+		}).Errorf("[httpclient:fast] request canceled")
 		return nil, ctx.Err()
 	}
 
@@ -327,6 +346,13 @@ func (c *FastClient) do(ctx context.Context, req *fasthttp.Request, resp *fastht
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"method":                  string(req.Header.Method()),
+		"url":                     string(req.URI().FullURI()),
+		"status":                  resp.StatusCode(),
+		"duration":                time.Since(start).String(),
+	}).Debugf("[httpclient:fast] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,

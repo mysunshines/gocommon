@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/config"
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/middleware"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/sirupsen/logrus"
 	"github.com/twmb/murmur3"
 	"golang.org/x/sync/singleflight"
 )
@@ -89,13 +91,22 @@ func redisReady() bool {
 }
 
 // logRedisOp 记录 Redis 操作日志，成功时以 Debug 级别输出避免噪音，
-// 失败时以 Error 级别输出。traceID 从 context 提取用于链路串联。
+// 失败时以 Error 级别输出。traceID 以独立字段输出，便于日志系统按 traceID 检索串联。
 func logRedisOp(ctx context.Context, op, key string, err error) {
 	traceID := middleware.GetTraceIDFromContext(ctx)
 	if err != nil {
-		log.Errorf("[Redis] traceID=%v | op=%s | key=%s | err=%v", traceID, op, key, err)
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"op":                      op,
+			"key":                     key,
+			"err":                     err.Error(),
+		}).Errorf("[Redis] op failed")
 	} else {
-		log.Debugf("[Redis] traceID=%v | op=%s | key=%s", traceID, op, key)
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"op":                      op,
+			"key":                     key,
+		}).Debugf("[Redis] op")
 	}
 }
 
@@ -146,9 +157,12 @@ func Delete(ctx context.Context, keys ...string) error {
 	realKeys := make([]string, len(keys))
 	for i, k := range keys {
 		realKeys[i] = GetKey(k)
-		logRedisOp(ctx, "DEL", k, nil)
 	}
-	return rdb.Del(ctx, realKeys...).Err()
+	err := rdb.Del(ctx, realKeys...).Err()
+	for _, k := range keys {
+		logRedisOp(ctx, "DEL", k, err)
+	}
+	return err
 }
 
 func Exists(ctx context.Context, key string) (bool, error) {
@@ -161,24 +175,34 @@ func Exists(ctx context.Context, key string) (bool, error) {
 }
 
 func Incr(ctx context.Context, key string) (int64, error) {
-	return rdb.Incr(ctx, GetKey(key)).Result()
+	val, err := rdb.Incr(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "INCR", key, err)
+	return val, err
 }
 
 func Expire(ctx context.Context, key string, expiration time.Duration) error {
-	return rdb.Expire(ctx, GetKey(key), expiration).Err()
+	err := rdb.Expire(ctx, GetKey(key), expiration).Err()
+	logRedisOp(ctx, "EXPIRE", key, err)
+	return err
 }
 
 func TTL(ctx context.Context, key string) (time.Duration, error) {
-	return rdb.TTL(ctx, GetKey(key)).Result()
+	d, err := rdb.TTL(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "TTL", key, err)
+	return d, err
 }
 
 // IncrBy 指定步长自增
 func IncrBy(ctx context.Context, key string, value int64) (int64, error) {
-	return rdb.IncrBy(ctx, GetKey(key), value).Result()
+	val, err := rdb.IncrBy(ctx, GetKey(key), value).Result()
+	logRedisOp(ctx, "INCRBY", key, err)
+	return val, err
 }
 
 func Decr(ctx context.Context, key string) (int64, error) {
-	return rdb.Decr(ctx, GetKey(key)).Result()
+	val, err := rdb.Decr(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "DECR", key, err)
+	return val, err
 }
 
 // MGet 批量获取
@@ -187,91 +211,131 @@ func MGet(ctx context.Context, keys ...string) ([]interface{}, error) {
 	for i, k := range keys {
 		realKeys[i] = GetKey(k)
 	}
-	return rdb.MGet(ctx, realKeys...).Result()
+	val, err := rdb.MGet(ctx, realKeys...).Result()
+	logRedisOp(ctx, "MGET", fmt.Sprintf("%v", keys), err)
+	return val, err
 }
 
 // MSet 批量设置
 func MSet(ctx context.Context, values ...interface{}) error {
-	return rdb.MSet(ctx, values...).Err()
+	err := rdb.MSet(ctx, values...).Err()
+	logRedisOp(ctx, "MSET", "", err)
+	return err
 }
 
 // ---- List 命令 ----
 
 func LPush(ctx context.Context, key string, values ...interface{}) (int64, error) {
-	return rdb.LPush(ctx, GetKey(key), values...).Result()
+	val, err := rdb.LPush(ctx, GetKey(key), values...).Result()
+	logRedisOp(ctx, "LPUSH", key, err)
+	return val, err
 }
 
 func RPush(ctx context.Context, key string, values ...interface{}) (int64, error) {
-	return rdb.RPush(ctx, GetKey(key), values...).Result()
+	val, err := rdb.RPush(ctx, GetKey(key), values...).Result()
+	logRedisOp(ctx, "RPUSH", key, err)
+	return val, err
 }
 
 func LPop(ctx context.Context, key string) (string, error) {
-	return rdb.LPop(ctx, GetKey(key)).Result()
+	val, err := rdb.LPop(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "LPOP", key, err)
+	return val, err
 }
 
 func RPop(ctx context.Context, key string) (string, error) {
-	return rdb.RPop(ctx, GetKey(key)).Result()
+	val, err := rdb.RPop(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "RPOP", key, err)
+	return val, err
 }
 
 func LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return rdb.LRange(ctx, GetKey(key), start, stop).Result()
+	val, err := rdb.LRange(ctx, GetKey(key), start, stop).Result()
+	logRedisOp(ctx, "LRANGE", key, err)
+	return val, err
 }
 
 func LLen(ctx context.Context, key string) (int64, error) {
-	return rdb.LLen(ctx, GetKey(key)).Result()
+	val, err := rdb.LLen(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "LLEN", key, err)
+	return val, err
 }
 
 // LTrim 裁剪列表只保留 [start, stop] 范围
 func LTrim(ctx context.Context, key string, start, stop int64) error {
-	return rdb.LTrim(ctx, GetKey(key), start, stop).Err()
+	err := rdb.LTrim(ctx, GetKey(key), start, stop).Err()
+	logRedisOp(ctx, "LTRIM", key, err)
+	return err
 }
 
 // ---- Hash 命令 ----
 
 func HSet(ctx context.Context, key string, values ...interface{}) (int64, error) {
-	return rdb.HSet(ctx, GetKey(key), values...).Result()
+	val, err := rdb.HSet(ctx, GetKey(key), values...).Result()
+	logRedisOp(ctx, "HSET", key, err)
+	return val, err
 }
 
 func HGet(ctx context.Context, key, field string) (string, error) {
-	return rdb.HGet(ctx, GetKey(key), field).Result()
+	val, err := rdb.HGet(ctx, GetKey(key), field).Result()
+	logRedisOp(ctx, "HGET", key, err)
+	return val, err
 }
 
 func HGetAll(ctx context.Context, key string) (map[string]string, error) {
-	return rdb.HGetAll(ctx, GetKey(key)).Result()
+	val, err := rdb.HGetAll(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "HGETALL", key, err)
+	return val, err
 }
 
 func HDel(ctx context.Context, key string, fields ...string) (int64, error) {
-	return rdb.HDel(ctx, GetKey(key), fields...).Result()
+	val, err := rdb.HDel(ctx, GetKey(key), fields...).Result()
+	logRedisOp(ctx, "HDEL", key, err)
+	return val, err
 }
 
 func HExists(ctx context.Context, key, field string) (bool, error) {
-	return rdb.HExists(ctx, GetKey(key), field).Result()
+	val, err := rdb.HExists(ctx, GetKey(key), field).Result()
+	logRedisOp(ctx, "HEXISTS", key, err)
+	return val, err
 }
 
 func HIncrBy(ctx context.Context, key, field string, incr int64) (int64, error) {
-	return rdb.HIncrBy(ctx, GetKey(key), field, incr).Result()
+	val, err := rdb.HIncrBy(ctx, GetKey(key), field, incr).Result()
+	logRedisOp(ctx, "HINCRBY", key, err)
+	return val, err
 }
 
 // ---- Set 命令 ----
 
 func SAdd(ctx context.Context, key string, members ...interface{}) (int64, error) {
-	return rdb.SAdd(ctx, GetKey(key), members...).Result()
+	val, err := rdb.SAdd(ctx, GetKey(key), members...).Result()
+	logRedisOp(ctx, "SADD", key, err)
+	return val, err
 }
 
 func SRem(ctx context.Context, key string, members ...interface{}) (int64, error) {
-	return rdb.SRem(ctx, GetKey(key), members...).Result()
+	val, err := rdb.SRem(ctx, GetKey(key), members...).Result()
+	logRedisOp(ctx, "SREM", key, err)
+	return val, err
 }
 
 func SIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
-	return rdb.SIsMember(ctx, GetKey(key), member).Result()
+	val, err := rdb.SIsMember(ctx, GetKey(key), member).Result()
+	logRedisOp(ctx, "SISMEMBER", key, err)
+	return val, err
 }
 
 func SMembers(ctx context.Context, key string) ([]string, error) {
-	return rdb.SMembers(ctx, GetKey(key)).Result()
+	val, err := rdb.SMembers(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "SMEMBERS", key, err)
+	return val, err
 }
 
 func SCard(ctx context.Context, key string) (int64, error) {
-	return rdb.SCard(ctx, GetKey(key)).Result()
+	val, err := rdb.SCard(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "SCARD", key, err)
+	return val, err
 }
 
 // ---- Sorted Set 命令 ----
@@ -279,35 +343,51 @@ func SCard(ctx context.Context, key string) (int64, error) {
 type Z = redis.Z
 
 func ZAdd(ctx context.Context, key string, members ...*redis.Z) (int64, error) {
-	return rdb.ZAdd(ctx, GetKey(key), members...).Result()
+	val, err := rdb.ZAdd(ctx, GetKey(key), members...).Result()
+	logRedisOp(ctx, "ZADD", key, err)
+	return val, err
 }
 
 func ZRem(ctx context.Context, key string, members ...interface{}) (int64, error) {
-	return rdb.ZRem(ctx, GetKey(key), members...).Result()
+	val, err := rdb.ZRem(ctx, GetKey(key), members...).Result()
+	logRedisOp(ctx, "ZREM", key, err)
+	return val, err
 }
 
 func ZRemRangeByScore(ctx context.Context, key string, min, max string) (int64, error) {
-	return rdb.ZRemRangeByScore(ctx, GetKey(key), min, max).Result()
+	val, err := rdb.ZRemRangeByScore(ctx, GetKey(key), min, max).Result()
+	logRedisOp(ctx, "ZREMRANGEBYSCORE", key, err)
+	return val, err
 }
 
 func ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return rdb.ZRange(ctx, GetKey(key), start, stop).Result()
+	val, err := rdb.ZRange(ctx, GetKey(key), start, stop).Result()
+	logRedisOp(ctx, "ZRANGE", key, err)
+	return val, err
 }
 
 func ZRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
-	return rdb.ZRangeWithScores(ctx, GetKey(key), start, stop).Result()
+	val, err := rdb.ZRangeWithScores(ctx, GetKey(key), start, stop).Result()
+	logRedisOp(ctx, "ZRANGEWITHSCORES", key, err)
+	return val, err
 }
 
 func ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return rdb.ZRevRange(ctx, GetKey(key), start, stop).Result()
+	val, err := rdb.ZRevRange(ctx, GetKey(key), start, stop).Result()
+	logRedisOp(ctx, "ZREVRANGE", key, err)
+	return val, err
 }
 
 func ZRevRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
-	return rdb.ZRevRangeWithScores(ctx, GetKey(key), start, stop).Result()
+	val, err := rdb.ZRevRangeWithScores(ctx, GetKey(key), start, stop).Result()
+	logRedisOp(ctx, "ZREVRANGEWITHSCORES", key, err)
+	return val, err
 }
 
 func ZCard(ctx context.Context, key string) (int64, error) {
-	return rdb.ZCard(ctx, GetKey(key)).Result()
+	val, err := rdb.ZCard(ctx, GetKey(key)).Result()
+	logRedisOp(ctx, "ZCARD", key, err)
+	return val, err
 }
 
 // TryLock 尝试获取分布式锁，成功返回 true
@@ -327,7 +407,9 @@ func Unlock(ctx context.Context, lockKey string, instanceID string) error {
 		else
 			return 0
 		end`
-	return rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID).Err()
+	err := rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID).Err()
+	logRedisOp(ctx, "UNLOCK", lockKey, err)
+	return err
 }
 
 // RenewLock 续期锁（延长 TTL），防止长时间操作导致锁过期
@@ -338,7 +420,9 @@ func RenewLock(ctx context.Context, lockKey string, instanceID string, ttl time.
 		else
 			return 0
 		end`
-	return rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID, int(ttl.Seconds())).Err()
+	err := rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID, int(ttl.Seconds())).Err()
+	logRedisOp(ctx, "RENEWLOCK", lockKey, err)
+	return err
 }
 
 func Close() error {
@@ -399,6 +483,7 @@ func (bf *BloomFilter) Add(ctx context.Context, value string) error {
 		pipe.SetBit(ctx, bf.key, int64((fp+uint64(i)*0x5bd1e995)%bf.size), 1)
 	}
 	_, err := pipe.Exec(ctx)
+	logRedisOp(ctx, "BFADD", bf.key, err)
 	return err
 }
 

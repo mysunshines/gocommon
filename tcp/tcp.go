@@ -10,7 +10,11 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 	"github.com/mysunshines/gocommon/resilience"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client TCP 客户端
@@ -106,6 +110,11 @@ func (c *Client) applyDeadlines(conn net.Conn) {
 func (c *Client) connect() error {
 	conn, err := net.DialTimeout("tcp", c.address, constants.DefaultDialTimeout*time.Second)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] dial failed")
 		return fmt.Errorf("failed to connect to %s: %w", c.address, err)
 	}
 
@@ -127,7 +136,7 @@ func (c *Client) reconnect() error {
 
 	// 关闭旧连接
 	if c.conn != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 	}
 
 	return c.connect()
@@ -147,18 +156,34 @@ func (c *Client) Send(ctx context.Context, data []byte) ([]byte, error) {
 	c.applyDeadlines(conn)
 
 	// 发送数据
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	_, err := conn.Write(data)
 	if err != nil {
 		// 尝试重连
 		if reconnErr := c.reconnect(); reconnErr != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"addr":                    c.address,
+				"err":                     err.Error(),
+			}).Errorf("[tcp] send failed and reconnect failed")
 			return nil, fmt.Errorf("send failed and reconnect failed: %w", err)
 		}
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] send failed")
 		return nil, fmt.Errorf("send failed: %w", err)
 	}
 
 	// 读取响应（循环读取直到 EOF，已有 readDeadline 兜底）
 	resp, err := io.ReadAll(conn)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] read response failed")
 		return nil, fmt.Errorf("read response failed: %w", err)
 	}
 
@@ -185,11 +210,22 @@ func (c *Client) SendWithLength(ctx context.Context, data []byte) ([]byte, error
 	message := append(lengthBytes, data...)
 
 	// 发送数据
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	_, err := conn.Write(message)
 	if err != nil {
 		if reconnErr := c.reconnect(); reconnErr != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"addr":                    c.address,
+				"err":                     err.Error(),
+			}).Errorf("[tcp] send(length) failed and reconnect failed")
 			return nil, fmt.Errorf("send failed and reconnect failed: %w", err)
 		}
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] send(length) failed")
 		return nil, fmt.Errorf("send failed: %w", err)
 	}
 
@@ -197,6 +233,11 @@ func (c *Client) SendWithLength(ctx context.Context, data []byte) ([]byte, error
 	lengthBuf := make([]byte, constants.MsgLenPrefixSize)
 	_, err = io.ReadFull(conn, lengthBuf)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] read response length failed")
 		return nil, fmt.Errorf("read response length failed: %w", err)
 	}
 	respLen := binary.BigEndian.Uint32(lengthBuf)
@@ -205,6 +246,11 @@ func (c *Client) SendWithLength(ctx context.Context, data []byte) ([]byte, error
 	resp := make([]byte, respLen)
 	_, err = io.ReadFull(conn, resp)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] read response data failed")
 		return nil, fmt.Errorf("read response data failed: %w", err)
 	}
 
@@ -233,8 +279,14 @@ func (c *Client) SendRaw(ctx context.Context, data []byte) error {
 
 	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	_, err := conn.Write(data)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] send raw failed")
 		return fmt.Errorf("send raw data failed: %w", err)
 	}
 
@@ -253,8 +305,14 @@ func (c *Client) Read(ctx context.Context) ([]byte, error) {
 
 	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	resp, err := io.ReadAll(conn)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[tcp] read failed")
 		return nil, fmt.Errorf("read failed: %w", err)
 	}
 

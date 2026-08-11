@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/grpcclient"
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Discovery 是基于 Consul 健康实例的服务发现客户端。
@@ -50,11 +55,12 @@ func NewDiscovery(consulAddr string, ttl time.Duration) *Discovery {
 
 // Resolve 返回指定 Consul 服务（如 "user-service"）的一个可用实例地址（host:port）。
 // 优先从本地缓存随机挑选；缓存为空时即时向 Consul 查询一次。彻底无可用实例时返回错误。
-func (d *Discovery) Resolve(service string) (string, error) {
+// ctx 用于提取 traceID 串联日志，可为 nil（如后台刷新）。
+func (d *Discovery) Resolve(ctx context.Context, service string) (string, error) {
 	if addrs := d.cached(service); len(addrs) > 0 {
 		return addrs[rand.Intn(len(addrs))], nil
 	}
-	addrs, err := d.query(service)
+	addrs, err := d.query(ctx, service)
 	if err != nil {
 		return "", err
 	}
@@ -84,7 +90,7 @@ func (d *Discovery) Run(stop <-chan struct{}) {
 			}
 			d.mu.RUnlock()
 			for _, s := range services {
-				if addrs, err := d.query(s); err == nil && len(addrs) > 0 {
+				if addrs, err := d.query(context.Background(), s); err == nil && len(addrs) > 0 {
 					d.mu.Lock()
 					d.cache[s] = addrs
 					d.lastSeen[s] = time.Now()
@@ -102,18 +108,41 @@ func (d *Discovery) cached(service string) []string {
 }
 
 // query 实时向 Consul 查询服务的最新 passing 实例地址列表。
-func (d *Discovery) query(service string) ([]string, error) {
+// ctx 用于提取 traceID 串联日志；可为 nil（如后台刷新），此时 traceID 字段为空。
+func (d *Discovery) query(ctx context.Context, service string) ([]string, error) {
 	url := fmt.Sprintf("http://%s/v1/health/service/%s?passing", d.consulAddr, service)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
 	resp, err := d.httpClient.Get(url)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"service":                 service,
+			"url":                     url,
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Warnf("[consul:discovery] query failed")
 		return nil, fmt.Errorf("consul discovery: query %q: %w", service, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"service":                 service,
+			"url":                     url,
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+		}).Warnf("[consul:discovery] query unexpected status")
 		return nil, fmt.Errorf("consul discovery: query %q: unexpected status %d", service, resp.StatusCode)
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"service":                 service,
+			"url":                     url,
+			"err":                     err.Error(),
+		}).Warnf("[consul:discovery] read response failed")
 		return nil, fmt.Errorf("consul discovery: read %q: %w", service, err)
 	}
 	var entries []struct {
@@ -126,6 +155,12 @@ func (d *Discovery) query(service string) ([]string, error) {
 		} `json:"Node"`
 	}
 	if err := json.Unmarshal(raw, &entries); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"service":                 service,
+			"url":                     url,
+			"err":                     err.Error(),
+		}).Warnf("[consul:discovery] unmarshal failed")
 		return nil, fmt.Errorf("consul discovery: unmarshal %q: %w", service, err)
 	}
 	addrs := make([]string, 0, len(entries))
@@ -139,6 +174,14 @@ func (d *Discovery) query(service string) ([]string, error) {
 		}
 		addrs = append(addrs, fmt.Sprintf("%s:%d", addr, e.Service.Port))
 	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"service":                 service,
+		"url":                     url,
+		"status":                  resp.StatusCode,
+		"instances":               len(addrs),
+		"duration":                time.Since(start).String(),
+	}).Debugf("[consul:discovery] query completed")
 	return addrs, nil
 }
 
@@ -173,9 +216,9 @@ func RegisterAlias(alias, consulService string) {
 // 再不行才用 alias 本身作为 Consul 服务名。内部启动后台刷新 goroutine。
 func UseConsulDiscovery(consulAddr string) {
 	disc := NewDiscovery(consulAddr, 0)
-	grpcclient.SetServiceResolver(func(alias string) (*grpcclient.ServiceEntry, bool) {
+	grpcclient.SetServiceResolver(func(ctx context.Context, alias string) (*grpcclient.ServiceEntry, bool) {
 		svc := resolveConsulService(alias)
-		target, err := disc.Resolve(svc)
+		target, err := disc.Resolve(ctx, svc)
 		if err != nil {
 			log.Warnf("consul discovery: resolve %q -> %q failed: %v", alias, svc, err)
 			return nil, false

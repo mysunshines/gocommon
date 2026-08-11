@@ -35,7 +35,8 @@ type ServiceEntry struct {
 var serviceRegistry sync.Map // map[string]*ServiceEntry
 
 // serviceResolver 自定义服务解析器（可选），覆盖默认注册表，例如对接 Consul 健康查询。
-var serviceResolver func(name string) (*ServiceEntry, bool)
+// 接收 ctx 以便从请求链路提取 traceID，使解析失败日志能按 traceID 串联。
+var serviceResolver func(ctx context.Context, name string) (*ServiceEntry, bool)
 
 // RegisterService 注册逻辑服务名到 gRPC 目标地址，并声明其 proto 全限定服务名。
 //   - alias：调用侧 api 使用的逻辑名，形如 "user.v1"，与 HTTP API 版本化风格保持一致；
@@ -59,7 +60,8 @@ func RegisterService(alias, service, target string) {
 
 // SetServiceResolver 设置自定义服务解析器，覆盖默认注册表（用于对接 Consul 等服务发现）。
 // 解析器返回 (*ServiceEntry, true) 时优先于 RegisterService 注册表。
-func SetServiceResolver(fn func(name string) (*ServiceEntry, bool)) {
+// 解析器接收 ctx 以便从请求链路提取 traceID，使解析失败日志能按 traceID 串联。
+func SetServiceResolver(fn func(ctx context.Context, name string) (*ServiceEntry, bool)) {
 	serviceResolver = fn
 }
 
@@ -127,7 +129,7 @@ func SendRequestWithFallback(ctx context.Context, api string, req, resp proto.Me
 		return err
 	}
 
-	entry, ok := resolveTarget(alias)
+	entry, ok := resolveTarget(ctx, alias)
 	if !ok {
 		return fmt.Errorf("grpcclient: 未注册服务 %q 的地址，请调用 RegisterService 或 SetServiceResolver", alias)
 	}
@@ -192,9 +194,10 @@ func parseAPI(api string) (alias, method string, err error) {
 }
 
 // resolveTarget 解析逻辑服务名对应的注册项：优先自定义解析器，其次注册表。
-func resolveTarget(alias string) (*ServiceEntry, bool) {
+// ctx 透传至解析器以便串联 traceID。
+func resolveTarget(ctx context.Context, alias string) (*ServiceEntry, bool) {
 	if serviceResolver != nil {
-		if e, ok := serviceResolver(alias); ok {
+		if e, ok := serviceResolver(ctx, alias); ok {
 			return e, true
 		}
 	}

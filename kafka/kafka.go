@@ -7,7 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
 	"github.com/segmentio/kafka-go"
+	"github.com/sirupsen/logrus"
 )
 
 // Producer Kafka 生产者
@@ -79,8 +84,20 @@ func (p *Producer) Send(ctx context.Context, key, value []byte) error {
 		Value: value,
 		Time:  time.Now(),
 	}
-
-	return p.writer.WriteMessages(ctx, msg)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err := p.writer.WriteMessages(ctx, msg); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"topic":                   p.writer.Topic,
+			"err":                     err.Error(),
+		}).Errorf("[kafka] send message failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"topic":                   p.writer.Topic,
+	}).Debugf("[kafka] message sent")
+	return nil
 }
 
 // SendWithHeaders 发送带 Header 的消息
@@ -99,8 +116,20 @@ func (p *Producer) SendWithHeaders(ctx context.Context, key, value []byte, heade
 		Headers: hdrs,
 		Time:    time.Now(),
 	}
-
-	return p.writer.WriteMessages(ctx, msg)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err := p.writer.WriteMessages(ctx, msg); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"topic":                   p.writer.Topic,
+			"err":                     err.Error(),
+		}).Errorf("[kafka] send message with headers failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"topic":                   p.writer.Topic,
+	}).Debugf("[kafka] message sent")
+	return nil
 }
 
 // SendJSON 发送 JSON 消息
@@ -117,7 +146,22 @@ func (p *Producer) SendBatch(ctx context.Context, messages []kafka.Message) erro
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return p.writer.WriteMessages(ctx, messages...)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err := p.writer.WriteMessages(ctx, messages...); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"topic":                   p.writer.Topic,
+			"count":                   len(messages),
+			"err":                     err.Error(),
+		}).Errorf("[kafka] send batch failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"topic":                   p.writer.Topic,
+		"count":                   len(messages),
+	}).Debugf("[kafka] batch sent")
+	return nil
 }
 
 // Close 关闭生产者
@@ -185,7 +229,13 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 			for _, handler := range handlers {
 				if err := handler(ctx, msg.Key, msg.Value); err != nil {
-					fmt.Printf("message handler error: %v\n", err)
+					log.WithFields(logrus.Fields{
+						constants.LogFieldTraceID: middleware.GetTraceIDFromContext(ctx),
+						"topic":                   c.reader.Config().Topic,
+						"partition":               msg.Partition,
+						"offset":                  msg.Offset,
+						"err":                     err.Error(),
+					}).Errorf("[kafka] message handler error")
 				}
 			}
 		}
@@ -317,7 +367,10 @@ func (h *SimpleHandler) ConsumeClaim(ctx context.Context, messages <-chan kafka.
 				return nil
 			}
 			if err := h.Handler(ctx, msg.Key, msg.Value); err != nil {
-				fmt.Printf("consumer group handler error: %v\n", err)
+				log.WithFields(logrus.Fields{
+					constants.LogFieldTraceID: middleware.GetTraceIDFromContext(ctx),
+					"err":                     err.Error(),
+				}).Errorf("[kafka] consumer group handler error")
 			}
 		case <-ctx.Done():
 			return ctx.Err()

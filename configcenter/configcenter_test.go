@@ -1,6 +1,7 @@
 package configcenter
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -116,7 +117,7 @@ func TestClientPutAndLoad(t *testing.T) {
 	defer c.Stop()
 	key := Key("svc-a", "test")
 	payload := []byte("log_level: info\nrate_limit:\n  qps: 200\n  burst: 400\n")
-	if err := c.Put(key, payload); err != nil {
+	if err := c.Put(context.Background(), key, payload); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -153,7 +154,7 @@ func TestServiceConfigInitAndLoad(t *testing.T) {
 	}
 
 	// 写入后 Load 应更新
-	_ = sc.KV().Put(Key("svc-b", "test"), []byte("log_level: debug\nrate_limit:\n  qps: 99\n  burst: 199\njwt_expire_time: 1234\n"))
+	_ = sc.KV().Put(context.Background(), Key("svc-b", "test"), []byte("log_level: debug\nrate_limit:\n  qps: 99\n  burst: 199\njwt_expire_time: 1234\n"))
 	if err := sc.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestWatchDetectsChange(t *testing.T) {
 	defer sc.Stop()
 	key := Key("svc-d", "test")
 	// 先写入初始值（模拟后台已配置），再 Load 拿到它（使 currentIndex 非 0）。
-	_ = sc.KV().Put(key, []byte("log_level: info\nrate_limit:\n  qps: 1\n  burst: 2\n"))
+	_ = sc.KV().Put(context.Background(), key, []byte("log_level: info\nrate_limit:\n  qps: 1\n  burst: 2\n"))
 	if err := sc.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -215,7 +216,7 @@ func TestWatchDetectsChange(t *testing.T) {
 		})
 	}()
 
-	_ = sc.KV().Put(key, []byte("log_level: warn\nrate_limit:\n  qps: 333\n  burst: 444\n"))
+	_ = sc.KV().Put(context.Background(), key, []byte("log_level: warn\nrate_limit:\n  qps: 333\n  burst: 444\n"))
 
 	select {
 	case <-updated:

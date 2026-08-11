@@ -12,7 +12,11 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 	"github.com/mysunshines/gocommon/resilience"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client HTTP 客户端
@@ -280,9 +284,11 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 	}
 	policy := resilience.ForService(key)
 	ctx := resilience.WithServiceKey(req.Context(), key)
+	traceID := middleware.GetTraceIDFromContext(req.Context())
 
 	// 用 resilience 包裹真正的网络请求：超时 + 限流 + 熔断 + 降级。
 	var resp *http.Response
+	start := time.Now()
 	execErr := policy.Execute(ctx, func(cctx context.Context) error {
 		// 将带超时的 context 注入请求，覆盖 client.Timeout（后者对读取也生效，二者取最短）。
 		r := req.Clone(cctx)
@@ -294,6 +300,13 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		return nil
 	}, nil)
 	if execErr != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  req.Method,
+			"url":                     req.URL.String(),
+			"duration":                time.Since(start).String(),
+			"err":                     execErr.Error(),
+		}).Errorf("[httpclient] request failed")
 		return nil, fmt.Errorf("request failed: %w", execErr)
 	}
 	defer resp.Body.Close()
@@ -301,9 +314,24 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  req.Method,
+			"url":                     req.URL.String(),
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[httpclient] read response failed")
 		return nil, fmt.Errorf("read response failed: %w", err)
 	}
 
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"method":                  req.Method,
+		"url":                     req.URL.String(),
+		"status":                  resp.StatusCode,
+		"duration":                time.Since(start).String(),
+	}).Debugf("[httpclient] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode,
 		Headers:    resp.Header,

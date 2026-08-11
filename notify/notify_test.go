@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -43,18 +44,18 @@ func TestFirstNonEmpty(t *testing.T) {
 
 func TestSendValidation(t *testing.T) {
 	// 缺少发件人
-	if err := Send(Config{Host: "h", Port: 25}, Message{To: []string{"x@y.com"}}); err == nil {
+	if err := Send(context.Background(), Config{Host: "h", Port: 25}, Message{To: []string{"x@y.com"}}); err == nil {
 		t.Fatal("expected missing sender error")
 	}
 	// 缺少收件人
-	if err := Send(Config{Host: "h", Port: 25, From: "f@x.com"}, Message{}); err == nil {
+	if err := Send(context.Background(), Config{Host: "h", Port: 25, From: "f@x.com"}, Message{}); err == nil {
 		t.Fatal("expected missing recipients error")
 	}
 }
 
 func TestSendBuildsMessage(t *testing.T) {
 	// 校验通过后进入 SMTP 阶段，目标地址不可达应返回网络错误而非校验错误。
-	err := Send(Config{Host: "127.0.0.1", Port: 1, From: "f@x.com"},
+	err := Send(context.Background(), Config{Host: "127.0.0.1", Port: 1, From: "f@x.com"},
 		Message{To: []string{"t@y.com"}, Subject: "Hi", TextBody: "hello"})
 	if err == nil {
 		t.Fatal("expected network error")
