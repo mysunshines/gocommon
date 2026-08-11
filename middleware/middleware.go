@@ -158,7 +158,7 @@ func LoggingMiddleware() gin.HandlerFunc {
 		// 取不到时降级为空串，避免日志缺字段。traceID 用于跨服务串联同一请求，方便 debug。
 		traceID, _ := c.Get(constants.HeaderXTraceID)
 
-		// 从 gin.Context 取 userId（由前置的 JWTValidMiddleware 注入），
+		// 从 gin.Context 取 userId（由前置的 AuthMiddleware 注入），
 		// 未登录接口取不到时降级为 "-"，避免日志缺字段。
 		userID, _ := GetUserIDFromContext(c)
 		userIDStr := "-"
@@ -246,8 +246,8 @@ func CORSMiddleware() gin.HandlerFunc {
 //
 // 对未带 Authorization 的公开写接口（注册、发验证码等）不强制校验，
 // 其防护由邮箱验证码、频率限制等承担。
-// 本中间件会在 JWTValidMiddleware 之前执行并自行解析一次 JWT；解析失败仅放行，
-// 交由后续 JWTValidMiddleware 返回 401，避免重复拒绝。
+// 本中间件会在 AuthMiddleware 之前执行并自行解析一次 JWT；解析失败仅放行，
+// 交由后续 AuthMiddleware(requireAuth=true) 返回 401，避免重复拒绝。
 func CSRFMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		method := c.Request.Method
@@ -316,6 +316,74 @@ func isOriginAllowed(origin string, allowed []string) bool {
 	return false
 }
 
+// AuthMiddleware 统一鉴权与用户上下文注入中间件。
+//
+// requireAuth 控制拦截行为：
+//   - requireAuth=true（鉴权模式）：缺失 Authorization、格式非法或签名/过期校验失败
+//     均直接返回 401 并中断，校验成功后将 user_id/username/role 注入 gin.Context；
+//     等价于原先的 JWTValidMiddleware。
+//   - requireAuth=false（非拦截模式）：仅当携带合法 JWT 时提取并注入用户信息，
+//     缺失或校验失败时跳过提取、请求仍放行，用于网关访问日志写 userId 等场景；
+//     等价于原先的 UserContextMiddleware。
+//
+// 两种模式共用同一套 JWT 解析逻辑，避免重复实现与语义分裂。
+func AuthMiddleware(requireAuth bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			if requireAuth {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"code":    401,
+					"message": "Authorization header required",
+				})
+				c.Abort()
+				return
+			}
+			c.Next()
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != strings.TrimSpace(constants.JWTAuthScheme) {
+			if requireAuth {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"code":    401,
+					"message": "Invalid authorization header format",
+				})
+				c.Abort()
+				return
+			}
+			c.Next()
+			return
+		}
+
+		claims, err := parseJWTClaims(parts[1])
+		if err != nil {
+			if requireAuth {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"code":    401,
+					"message": "Invalid or expired token",
+				})
+				c.Abort()
+				return
+			}
+			c.Next()
+			return
+		}
+
+		if uid, ok := claims["user_id"]; ok {
+			c.Set(UserIDContextKey, uid)
+		}
+		if uname, ok := claims["username"]; ok {
+			c.Set(UsernameContextKey, uname)
+		}
+		if role, ok := claims["role"]; ok {
+			c.Set(RoleContextKey, role)
+		}
+		c.Next()
+	}
+}
+
 func parseJWTClaims(tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -333,101 +401,8 @@ func parseJWTClaims(tokenString string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
-func JWTValidMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "Authorization header required",
-			})
-			c.Abort()
-			return
-		}
-
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != strings.TrimSpace(constants.JWTAuthScheme) {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "Invalid authorization header format",
-			})
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
-
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(jwtSecret), nil
-		})
-
-		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "Invalid or expired token",
-			})
-			c.Abort()
-			return
-		}
-
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "Invalid token claims",
-			})
-			c.Abort()
-			return
-		}
-
-		c.Set(UserIDContextKey, claims["user_id"])
-		c.Set(UsernameContextKey, claims["username"])
-		if role, ok := claims["role"]; ok {
-			c.Set(RoleContextKey, role)
-		}
-		c.Next()
-	}
-}
-
-// UserContextMiddleware 解析并提取 JWT 中的用户身份信息（user_id/username/role）
-// 注入 gin.Context，供后续 LoggingMiddleware 等记录，但不拦截请求：token 缺失或
-// 校验失败时仅跳过提取，请求仍放行。鉴权职责仍由下游服务 / 显式 JWTValidMiddleware 承担。
-// 典型用途：在网关层统一把 userId 写入访问日志，而不强制所有路由鉴权。
-func UserContextMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.Next()
-			return
-		}
-		tokenStr, ok := strings.CutPrefix(authHeader, constants.JWTAuthScheme)
-		if !ok {
-			c.Next()
-			return
-		}
-		claims, err := parseJWTClaims(tokenStr)
-		if err != nil {
-			c.Next()
-			return
-		}
-		if uid, ok := claims["user_id"]; ok {
-			c.Set(UserIDContextKey, uid)
-		}
-		if uname, ok := claims["username"]; ok {
-			c.Set(UsernameContextKey, uname)
-		}
-		if role, ok := claims["role"]; ok {
-			c.Set(RoleContextKey, role)
-		}
-		c.Next()
-	}
-}
-
 // AdminOnlyMiddleware 仅允许管理员访问。
-// 依赖前置的 JWTValidMiddleware 已将 role 注入 gin.Context（见 RoleContextKey）。
+// 依赖前置的 AuthMiddleware(requireAuth=true) 已将 role 注入 gin.Context（见 RoleContextKey）。
 // JWT 中数字声明默认解析为 float64，这里做类型兼容。
 func AdminOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {

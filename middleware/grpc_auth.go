@@ -27,7 +27,7 @@ const (
 //     GetGRPCUserID 等读取，避免 handler 再从请求体盲目取 user_id（防 IDOR）；
 //   - 若请求未携带 Token：放行（匿名），由具体 handler 自行决定是否要求登录。
 //
-// 与 HTTP 层 JWTValidMiddleware / CSRFMiddleware 形成互补：前端主流流量经网关→gRPC，
+// 与 HTTP 层 AuthMiddleware / CSRFMiddleware 形成互补：前端主流流量经网关→gRPC，
 // 过去 gRPC 层完全没有鉴权，导致后端 gin 的 JWT 中间件形同虚设；本拦截器让鉴权真正落地。
 func GRPCAuthInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {

@@ -95,13 +95,13 @@ func TestContextHelpers(t *testing.T) {
 	}
 }
 
-func TestJWTValidMiddleware(t *testing.T) {
+func TestAuthMiddlewareRequireAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	secret := "test-secret"
 	InitJWT(secret)
 
 	r := gin.New()
-	r.Use(JWTValidMiddleware())
+	r.Use(AuthMiddleware(true))
 	r.GET("/", func(c *gin.Context) {
 		uid, _ := GetUserIDFromContext(c)
 		c.String(http.StatusOK, "%d", uid)
@@ -127,12 +127,12 @@ func TestJWTValidMiddleware(t *testing.T) {
 	}
 }
 
-func TestJWTValidMiddlewareMissingHeader(t *testing.T) {
+func TestAuthMiddlewareRequireAuthMissingHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	InitJWT("test-secret")
 
 	r := gin.New()
-	r.Use(JWTValidMiddleware())
+	r.Use(AuthMiddleware(true))
 	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	w := httptest.NewRecorder()
@@ -149,7 +149,7 @@ func TestAdminOnlyMiddleware(t *testing.T) {
 	InitJWT("test-secret")
 
 	r := gin.New()
-	r.Use(JWTValidMiddleware(), AdminOnlyMiddleware())
+	r.Use(AuthMiddleware(true), AdminOnlyMiddleware())
 	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	makeTok := func(role float64) string {
