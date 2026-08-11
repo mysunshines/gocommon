@@ -135,7 +135,7 @@ func Get(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("redis not initialized")
 	}
 	val, err := rdb.Get(ctx, GetKey(key)).Result()
-	// Get 的 key miss (redis.Nil) 不算错误；命中与否上报 redis_hit_rate 指标。
+	// Get 的 key miss (redis.Nil) 不算错误；命中与否上报 redis_cache_hits_total / redis_cache_misses_total。
 	hit := err == nil
 	if err != nil && err != redis.Nil {
 		logRedisOp(ctx, "GET", key, err)

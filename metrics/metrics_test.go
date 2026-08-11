@@ -14,6 +14,8 @@ func TestInitAndRecord(t *testing.T) {
 	RecordSlowQuery("SELECT 1", 100*time.Millisecond)
 	RecordRedisHit(true)
 	RecordRedisHit(false)
+	RecordCacheHit()
+	RecordCacheMiss()
 	RecordHotKey("hot-key")
 	RecordPanic("svc")
 	RecordRPCRequest("svc", "Method", "200", 5*time.Millisecond)

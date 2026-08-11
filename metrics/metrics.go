@@ -20,7 +20,8 @@ var (
 	panicCounter      *prometheus.CounterVec
 	mysqlSlowQueries  prometheus.Counter
 	slowQueryDuration *prometheus.HistogramVec
-	redisHitRate      prometheus.Gauge
+	redisCacheHits    prometheus.Counter
+	redisCacheMisses  prometheus.Counter
 	redisHotKeys      *prometheus.CounterVec
 
 	httpRequestsTotal  *prometheus.CounterVec
@@ -98,9 +99,14 @@ func Init() {
 			[]string{"operation"},
 		)
 
-		redisHitRate = promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "redis_hit_rate",
-			Help: "Redis cache hit rate",
+	redisCacheHits = promauto.NewCounter(prometheus.CounterOpts{
+			Name: "redis_cache_hits_total",
+			Help: "Total number of Redis cache hits",
+		})
+
+		redisCacheMisses = promauto.NewCounter(prometheus.CounterOpts{
+			Name: "redis_cache_misses_total",
+			Help: "Total number of Redis cache misses",
 		})
 
 		redisHotKeys = promauto.NewCounterVec(
@@ -228,12 +234,25 @@ func RecordSlowQuery(sql string, duration time.Duration) {
 	slowQueryDuration.WithLabelValues(sql).Observe(duration.Seconds())
 }
 
+// RecordRedisHit 记录一次缓存访问结果（命中/未命中）。命中率比率由
+// sum(rate(redis_cache_hits_total[5m])) / (hits + misses) 计算得出，
+// 比原先的 0/1 Gauge 更符合 Prometheus 语义且可跨时间聚合。
 func RecordRedisHit(hit bool) {
 	if hit {
-		redisHitRate.Set(1.0)
+		redisCacheHits.Inc()
 	} else {
-		redisHitRate.Set(0.0)
+		redisCacheMisses.Inc()
 	}
+}
+
+// RecordCacheHit 显式记录一次缓存命中。
+func RecordCacheHit() {
+	redisCacheHits.Inc()
+}
+
+// RecordCacheMiss 显式记录一次缓存未命中。
+func RecordCacheMiss() {
+	redisCacheMisses.Inc()
 }
 
 func RecordHotKey(key string) {
