@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,7 +18,25 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	logrus "github.com/sirupsen/logrus"
 )
+
+// bodyCaptureWriter 在 debug 级别下包装 gin.ResponseWriter，截获响应体以便记录日志。
+// 仅在日志级别为 debug 时启用，非 debug 路径不包装，无性能损耗。
+type bodyCaptureWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+func (w *bodyCaptureWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *bodyCaptureWriter) WriteString(s string) (int, error) {
+	w.body.WriteString(s)
+	return w.ResponseWriter.WriteString(s)
+}
 
 var (
 	jwtSecret string
@@ -69,6 +89,18 @@ func LoggingMiddleware() gin.HandlerFunc {
 		path := c.Request.URL.Path
 		raw := c.Request.URL.RawQuery
 
+		// 仅在 debug 级别下记录请求/响应体：先克隆请求体（还原供下游 handler 读取），
+		// 并包装 ResponseWriter 以截获响应体。非 debug 路径不触发，零开销。
+		debugEnabled := log.GetLogger().IsLevelEnabled(logrus.DebugLevel)
+		var reqBody []byte
+		if debugEnabled {
+			if c.Request.Body != nil {
+				reqBody, _ = io.ReadAll(io.LimitReader(c.Request.Body, 4096))
+				c.Request.Body = io.NopCloser(bytes.NewReader(reqBody)) // 还原，避免下游读不到 body
+			}
+			c.Writer = &bodyCaptureWriter{ResponseWriter: c.Writer, body: &bytes.Buffer{}}
+		}
+
 		c.Next()
 
 		latency := time.Since(start)
@@ -110,6 +142,16 @@ func LoggingMiddleware() gin.HandlerFunc {
 			timestamp,
 			c.Errors.ByType(gin.ErrorTypePrivate).String(),
 		)
+
+		// debug 级别下打印请求与响应明细（含 query + body，请求体已限制最大 4KB 防止日志膨胀）
+		if debugEnabled {
+			log.Debugf("[HTTP-REQ] traceID=%v | method=%s | path=%s | query=%s | body=%s",
+				traceID, method, path, raw, string(reqBody))
+			if bw, ok := c.Writer.(*bodyCaptureWriter); ok {
+				log.Debugf("[HTTP-RESP] traceID=%v | method=%s | path=%s | status=%d | body=%s",
+					traceID, method, path, statusCode, bw.body.String())
+			}
+		}
 	}
 }
 
