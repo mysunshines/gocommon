@@ -247,11 +247,9 @@ func isOriginAllowed(origin string, allowed []string) bool {
 //
 // requireAuth 控制拦截行为：
 //   - requireAuth=true（鉴权模式）：缺失 Authorization、格式非法或签名/过期校验失败
-//     均直接返回 401 并中断，校验成功后将 user_id/username/role 注入 gin.Context；
-//     等价于原先的 JWTValidMiddleware（鉴权模式）。
+//     均直接返回 401 并中断，校验成功后将 user_id/username/role 注入 gin.Context。
 //   - requireAuth=false（非拦截模式）：仅当携带合法 JWT 时提取并注入用户信息，
-//     缺失或校验失败时跳过提取、请求仍放行，用于网关访问日志写 userId 等场景；
-//     等价于原先的 UserContextMiddleware。
+//     缺失或校验失败时跳过提取、请求仍放行，用于网关访问日志写 userId 等场景。
 //
 // 两种模式共用同一套 JWT 解析逻辑，避免重复实现与语义分裂。
 func AuthMiddleware(requireAuth bool) gin.HandlerFunc {

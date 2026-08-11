@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
+	logrus "github.com/sirupsen/logrus"
 )
 
 // GRPCMetricsInterceptor 等价于 HTTP 层的 MetricsMiddleware：
@@ -35,9 +40,10 @@ func GRPCMetricsInterceptor(service string) grpc.UnaryServerInterceptor {
 }
 
 // GRPCLoggingInterceptor 等价于 HTTP 层的 LoggingMiddleware：
-// 记录每个 RPC 的方法、对端地址、耗时与错误（如有），便于问题排查与审计。
-// 同时从 gRPC metadata 提取 Gateway 透传的 traceID，注入 context 并打印到日志，
-// 实现 Gateway → 下游 gRPC 全链路串联。
+// 记录每个 RPC 的 traceID / method / client / userId / status / latency，错误时带 err，
+// 字段与 HTTP 访问日志保持一致，便于统一审计。同时从 gRPC metadata 提取 Gateway 透传的
+// traceID，注入 context 并打印，实现 Gateway → 下游 gRPC 全链路串联。
+// 当日志级别为 debug 时，额外以 [gRPC-REQ] / [gRPC-RESP] 打印请求与响应体（JSON）。
 func GRPCLoggingInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// 从 gRPC 入站 metadata 提取 traceID（由 Gateway forwardRequest 透传）
@@ -58,14 +64,37 @@ func GRPCLoggingInterceptor() grpc.UnaryServerInterceptor {
 		if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
 			clientAddr = p.Addr.String()
 		}
+		userID := "" // 匿名请求为空字符串，与 HTTP 的 userId 行为一致
+		if id, ok := GetGRPCUserID(ctx); ok {
+			userID = strconv.FormatUint(uint64(id), 10)
+		}
+		statusCode := status.Code(err).String()
 
 		if err != nil {
-			log.Errorf("[gRPC] traceID=%v | method=%s | client=%s | duration=%v | err=%v",
-				traceID, info.FullMethod, clientAddr, duration, err)
+			log.Errorf("[gRPC] traceID=%v | method=%s | client=%s | userId=%s | status=%s | latency=%v | err=%v",
+				traceID, info.FullMethod, clientAddr, userID, statusCode, duration, err)
 		} else {
-			log.Infof("[gRPC] traceID=%v | method=%s | client=%s | duration=%v",
-				traceID, info.FullMethod, clientAddr, duration)
+			log.Infof("[gRPC] traceID=%v | method=%s | client=%s | userId=%s | status=%s | latency=%v",
+				traceID, info.FullMethod, clientAddr, userID, statusCode, duration)
 		}
+
+		// debug 级别下打印请求/响应体，便于线上排障（需 SetLevel("debug") 开启）。
+		// 注意：仅当 handler 成功返回后才打印 resp，避免对错误路径误打半成品。
+		if log.GetLogger().IsLevelEnabled(logrus.DebugLevel) {
+			if pm, ok := req.(proto.Message); ok {
+				if b, e := protojson.Marshal(pm); e == nil {
+					log.Debugf("[gRPC-REQ] traceID=%v | method=%s | body=%s", traceID, info.FullMethod, string(b))
+				}
+			}
+			if err == nil {
+				if pm, ok := resp.(proto.Message); ok {
+					if b, e := protojson.Marshal(pm); e == nil {
+						log.Debugf("[gRPC-RESP] traceID=%v | method=%s | body=%s", traceID, info.FullMethod, string(b))
+					}
+				}
+			}
+		}
+
 		return resp, err
 	}
 }
