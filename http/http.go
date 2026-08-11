@@ -27,6 +27,7 @@ type Client struct {
 	headers        map[string]string // 默认请求头（单次请求可覆盖）
 	middleware     []Middleware      // 请求发出前执行的中间件链
 	resilienceKey  string            // resilience 按此 key 区分熔断/限流；为空时取 baseURL 的 host
+	dumpBodies     bool              // 是否在 debug 日志中记录请求/响应体
 }
 
 // Middleware HTTP 中间件
@@ -105,6 +106,14 @@ func WithMiddleware(m Middleware) Option {
 func WithResilienceKey(key string) Option {
 	return func(c *Client) {
 		c.resilienceKey = key
+	}
+}
+
+// WithDumpBodies 开启后，debug 级别的请求/响应日志会附带 req_body 与 resp_body，
+// 便于排查 Consul 等服务发现的请求与响应内容。默认关闭，避免大响应体刷日志。
+func WithDumpBodies(enable bool) Option {
+	return func(c *Client) {
+		c.dumpBodies = enable
 	}
 }
 
@@ -268,6 +277,13 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 	// 应用默认请求头
 	c.applyHeaders(req)
 
+	// 若开启 body 记录，先读取原始请求体（读完须重建 req.Body，因后续 Clone 仍需读取）。
+	var reqBody []byte
+	if c.dumpBodies && req.Body != nil {
+		reqBody, _ = io.ReadAll(req.Body)
+		req.Body = io.NopCloser(bytes.NewReader(reqBody))
+	}
+
 	// 执行中间件
 	if err := c.executeMiddleware(req); err != nil {
 		return nil, err
@@ -300,13 +316,17 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		return nil
 	}, nil)
 	if execErr != nil {
-		log.WithFields(logrus.Fields{
+		fields := logrus.Fields{
 			constants.LogFieldTraceID: traceID,
 			"method":                  req.Method,
 			"url":                     req.URL.String(),
 			"duration":                time.Since(start).String(),
 			"err":                     execErr.Error(),
-		}).Errorf("[httpclient] request failed")
+		}
+		if c.dumpBodies {
+			fields["req_body"] = string(reqBody)
+		}
+		log.WithFields(fields).Errorf("[httpclient] request failed")
 		return nil, fmt.Errorf("request failed: %w", execErr)
 	}
 	defer resp.Body.Close()
@@ -314,24 +334,33 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.WithFields(logrus.Fields{
+		fields := logrus.Fields{
 			constants.LogFieldTraceID: traceID,
 			"method":                  req.Method,
 			"url":                     req.URL.String(),
 			"status":                  resp.StatusCode,
 			"duration":                time.Since(start).String(),
 			"err":                     err.Error(),
-		}).Errorf("[httpclient] read response failed")
+		}
+		if c.dumpBodies {
+			fields["req_body"] = string(reqBody)
+		}
+		log.WithFields(fields).Errorf("[httpclient] read response failed")
 		return nil, fmt.Errorf("read response failed: %w", err)
 	}
 
-	log.WithFields(logrus.Fields{
+	fields := logrus.Fields{
 		constants.LogFieldTraceID: traceID,
 		"method":                  req.Method,
 		"url":                     req.URL.String(),
 		"status":                  resp.StatusCode,
 		"duration":                time.Since(start).String(),
-	}).Debugf("[httpclient] request completed")
+	}
+	if c.dumpBodies {
+		fields["req_body"] = string(reqBody)
+		fields["resp_body"] = string(body)
+	}
+	log.WithFields(fields).Debugf("[httpclient] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode,
 		Headers:    resp.Header,

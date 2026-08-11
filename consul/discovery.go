@@ -79,8 +79,9 @@ type Discovery struct {
 }
 
 // NewDiscovery 创建服务发现客户端。consulAddr 为 Consul Agent 地址（如 "consul:8500"）。
-// ttl 为缓存有效期，<=0 时使用默认 10s。
-func NewDiscovery(consulAddr string, ttl time.Duration) *Discovery {
+// ttl 为缓存有效期，<=0 时使用默认 10s。dumpBodies 为 true 时，底层 httpclient 的
+// debug 日志会附带 request/response body，便于排查 Consul 请求与响应内容。
+func NewDiscovery(consulAddr string, ttl time.Duration, dumpBodies bool) *Discovery {
 	if consulAddr == "" {
 		consulAddr = "consul:8500"
 	}
@@ -93,6 +94,7 @@ func NewDiscovery(consulAddr string, ttl time.Duration) *Discovery {
 			httpclient.WithBaseURL(fmt.Sprintf("http://%s", consulAddr)),
 			httpclient.WithTimeout(constants.DefaultHTTPRequestTimeout*time.Second),
 			httpclient.WithResilienceKey(resilienceKey),
+			httpclient.WithDumpBodies(dumpBodies),
 		),
 		ttl:      ttl,
 		cache:    make(map[string][]*Instance),
@@ -400,7 +402,7 @@ func RegisterAlias(alias, consulService string) {
 // （user.v1.UserService → user-service），与网关及服务注册名保持一致；
 // 再不行才用 alias 本身作为 Consul 服务名。内部启动后台刷新 goroutine。
 func UseConsulDiscovery(consulAddr string) {
-	disc := NewDiscovery(consulAddr, 0)
+	disc := NewDiscovery(consulAddr, 0, false)
 	grpcclient.SetServiceResolver(func(ctx context.Context, alias string) (*grpcclient.ServiceEntry, bool) {
 		svc := resolveConsulService(alias)
 		target, err := disc.Resolve(ctx, svc)
