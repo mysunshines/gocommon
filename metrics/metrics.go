@@ -316,20 +316,20 @@ func StartRuntimeMetrics(ctx context.Context, interval time.Duration) {
 
 // StartHealthReporter 启动一个定时 ticker，周期性探测 DB/Redis 可用性并上报
 // service_health 指标，解决 dashboard 服务健康 panel 长期 No data 的问题。
-// dbPing / redisPing 可为 nil（跳过对应探测）。各服务 main 调一次即可。
-func StartHealthReporter(ctx context.Context, serviceName string, interval time.Duration, dbPing func() error, redisPing func() error) {
+// dbPing / redisPing 可为 nil（跳过对应探测），签名带 ctx 便于传递超时上下文。各服务 main 调一次即可。
+func StartHealthReporter(ctx context.Context, serviceName string, interval time.Duration, dbPing func(context.Context) error, redisPing func(context.Context) error) {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
 	probe := func() bool {
 		healthy := true
 		if dbPing != nil {
-			if err := dbPing(); err != nil {
+			if err := dbPing(ctx); err != nil {
 				healthy = false
 			}
 		}
 		if redisPing != nil {
-			if err := redisPing(); err != nil {
+			if err := redisPing(ctx); err != nil {
 				healthy = false
 			}
 		}
