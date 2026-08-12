@@ -318,6 +318,11 @@ const (
 
 	// LogInitMsg 日志初始化消息
 	LogInitMsg = "Logger initialized"
+
+	// AsyncLogBufferSize 异步日志写入器的 channel 缓冲大小（条）。
+	// 请求 goroutine 仅把日志投递到该缓冲后立即返回；缓冲满时丢弃而非阻塞，
+	// 因此该值越大可容忍的瞬时日志洪峰越高，但占用内存也越多。
+	AsyncLogBufferSize = 4096
 )
 
 // ============================================================================

@@ -50,7 +50,7 @@ func Init(logDir, logLevel, svcName string) {
 			if err == nil {
 				// 同时输出到 stdout 和文件，确保 Docker logs 和文件都有记录。
 				// 再用 AsyncWriter 包裹，使日志 I/O 异步化，避免磁盘/管道写入慢阻塞请求 goroutine。
-				asyncWriter = NewAsyncWriter(io.MultiWriter(os.Stdout, file), 4096)
+				asyncWriter = NewAsyncWriter(io.MultiWriter(os.Stdout, file), constants.AsyncLogBufferSize)
 				logger.SetOutput(asyncWriter)
 			}
 		}
