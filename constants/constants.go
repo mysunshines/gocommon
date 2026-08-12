@@ -303,6 +303,11 @@ const (
 	// DefaultGRPCPort 默认 gRPC 端口
 	DefaultGRPCPort = 9090
 
+	// GatewayDebugPortArticle article-service 的 grpc-gateway 独立调试端口（方向 A）。
+	// 该端口将 HTTP 请求经 grpc-gateway 反向代理到本地 gRPC 端口，仅供开发联调，
+	// 与线上 gateway 的 C 端转发互不干扰。可由环境变量 ARTICLE_GW_DEBUG_PORT 覆盖。
+	GatewayDebugPortArticle = 8083
+
 	// LogFileNameFmt 日志文件名格式: {service}-{date}.log
 	LogFileNameFmt = "%s-%s.log"
 
