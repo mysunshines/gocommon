@@ -15,6 +15,7 @@ import (
 
 var (
 	logger      *logrus.Logger
+	asyncWriter *AsyncWriter  // 异步写入器，包裹 stdout/文件，避免日志 I/O 阻塞请求路径
 	once        sync.Once
 	currentDate string        // 当前日志文件对应的日期
 	logDirPath  string        // 日志目录
@@ -47,8 +48,10 @@ func Init(logDir, logLevel, svcName string) {
 			logFile := filepath.Join(logDir, fmt.Sprintf(constants.LogFileNameFmt, svcName, today))
 			file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, constants.FilePermFile)
 			if err == nil {
-				// 同时输出到 stdout 和文件，确保 Docker logs 和文件都有记录
-				logger.SetOutput(io.MultiWriter(os.Stdout, file))
+				// 同时输出到 stdout 和文件，确保 Docker logs 和文件都有记录。
+				// 再用 AsyncWriter 包裹，使日志 I/O 异步化，避免磁盘/管道写入慢阻塞请求 goroutine。
+				asyncWriter = NewAsyncWriter(io.MultiWriter(os.Stdout, file), 4096)
+				logger.SetOutput(asyncWriter)
 			}
 		}
 
@@ -104,10 +107,12 @@ func Errorf(format string, args ...interface{}) {
 }
 
 func Fatal(args ...interface{}) {
+	FlushLog() // 退出前先把残留日志落盘，避免崩溃日志丢失
 	GetLogger().Fatal(args...)
 }
 
 func Fatalf(format string, args ...interface{}) {
+	FlushLog() // 退出前先把残留日志落盘，避免崩溃日志丢失
 	GetLogger().Fatalf(format, args...)
 }
 
@@ -150,7 +155,8 @@ func doRotate(today string) error {
 	if err != nil {
 		return err
 	}
-	logger.SetOutput(io.MultiWriter(os.Stdout, file))
+	// 热替换异步 writer 的底层目标，保留异步管道，不回退到同步写入。
+	asyncWriter.SetDst(io.MultiWriter(os.Stdout, file))
 	currentDate = today
 	return nil
 }
@@ -183,9 +189,19 @@ func SetLevel(level string) error {
 	return nil
 }
 
-// StopRotation 停止后台日志轮转（优雅关闭时调用）
+// StopRotation 停止后台日志轮转并优雅 drain 异步日志（优雅关闭时调用）。
 func StopRotation() {
 	if stopCh != nil {
 		close(stopCh)
+	}
+	FlushLog()
+}
+
+// FlushLog 优雅关闭异步写入器：阻塞直到残留日志全部写完。
+// 进程退出前应调用一次（StopRotation 已自动调用），确保关键日志不丢。
+// 多次调用安全（内部用 once 保护）。
+func FlushLog() {
+	if asyncWriter != nil {
+		_ = asyncWriter.Close()
 	}
 }
