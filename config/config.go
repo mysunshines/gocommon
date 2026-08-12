@@ -26,6 +26,20 @@ type Config struct {
 	Server    ServerConfig    `yaml:"server"`     // 入站 server 调优（gRPC/HTTP 超时与 keepalive）
 	CORS      CORSConfig      `yaml:"cors,omitempty"` // CORS 跨域配置（article 等需要 HTTP 直连的服务）
 	Mail      MailConfig      `yaml:"mail,omitempty"` // 邮件配置（user 等需要发信的服务）
+	MinIO     MinIOConfig     `yaml:"minio"`      // 对象存储配置（文件上传统一落 MinIO）
+}
+
+// MinIOConfig 对象存储（MinIO / S3 兼容）配置。
+// 网关接收文件上传后存入 MinIO 并返回公共读 URL；下游服务不再各自落本地盘。
+type MinIOConfig struct {
+	Enabled         bool   `yaml:"enabled"`          // 是否启用对象存储（网关上传需开启）
+	Endpoint        string `yaml:"endpoint"`         // MinIO API 地址，如 "minio:9000"
+	AccessKeyID     string `yaml:"access_key_id"`    // 访问 Key
+	SecretAccessKey string `yaml:"secret_access_key"`// 访问 Secret
+	Bucket          string `yaml:"bucket"`           // 存储桶名，如 "blog"
+	UseSSL          bool   `yaml:"use_ssl"`          // 是否 HTTPS
+	PublicBaseURL   string `yaml:"public_base_url"`  // 文件对外可访问基础 URL（不含末尾斜杠）
+	AutoCreateBucket bool  `yaml:"auto_create_bucket"` // 初始化时自动创建不存在的 bucket（公共读）
 }
 
 type AppConfig struct {
@@ -435,5 +449,28 @@ func ApplyEnvOverrides(c *Config) {
 		if port, err := strconv.Atoi(v); err == nil {
 			c.GRPC.Port = port
 		}
+	}
+
+	// MinIO 对象存储
+	if v := os.Getenv(constants.EnvMinIOEnabled); v != "" {
+		c.MinIO.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv(constants.EnvMinIOEndpoint); v != "" {
+		c.MinIO.Endpoint = v
+	}
+	if v := os.Getenv(constants.EnvMinIOAccessKeyID); v != "" {
+		c.MinIO.AccessKeyID = v
+	}
+	if v := os.Getenv(constants.EnvMinIOSecretAccessKey); v != "" {
+		c.MinIO.SecretAccessKey = v
+	}
+	if v := os.Getenv(constants.EnvMinIOBucket); v != "" {
+		c.MinIO.Bucket = v
+	}
+	if v := os.Getenv(constants.EnvMinIOPublicBaseURL); v != "" {
+		c.MinIO.PublicBaseURL = v
+	}
+	if v := os.Getenv(constants.EnvMinIOAutoCreateBucket); v != "" {
+		c.MinIO.AutoCreateBucket = v == "true" || v == "1"
 	}
 }

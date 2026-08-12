@@ -394,6 +394,15 @@ const (
 
 	// ---- CORS ----
 	EnvCORSAllowOrigins = "CORS_ALLOW_ORIGINS"
+
+	// ---- 对象存储 MinIO ----
+	EnvMinIOEnabled          = "MINIO_ENABLED"
+	EnvMinIOEndpoint         = "MINIO_ENDPOINT"
+	EnvMinIOAccessKeyID      = "MINIO_ACCESS_KEY_ID"
+	EnvMinIOSecretAccessKey  = "MINIO_SECRET_ACCESS_KEY"
+	EnvMinIOBucket           = "MINIO_BUCKET"
+	EnvMinIOPublicBaseURL    = "MINIO_PUBLIC_BASE_URL"
+	EnvMinIOAutoCreateBucket = "MINIO_AUTO_CREATE_BUCKET"
 )
 
 // ============================================================================
