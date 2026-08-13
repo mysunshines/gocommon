@@ -193,17 +193,18 @@ func CORSMiddleware() gin.HandlerFunc {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
 			if isOriginAllowed(origin, allowed) {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				c.Writer.Header().Set(constants.HeaderAccessControlAllowOrigin, origin)
 				c.Writer.Header().Set("Vary", "Origin")
 			}
 			// 不在白名单：不设置 Allow-Origin，浏览器将拒绝跨域读取响应
 		}
 
-		c.Writer.Header().Set("Access-Control-Allow-Headers",
+		c.Writer.Header().Set(constants.HeaderAccessControlAllowHeaders,
 			"Origin, Content-Type, "+constants.HeaderAuthorization+", X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, "+csrfHeader)
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
-		c.Writer.Header().Set("Access-Control-Max-Age", constants.CORSMaxAge)
+		c.Writer.Header().Set(constants.HeaderAccessControlAllowMethods, "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+		c.Writer.Header().Set(constants.HeaderAccessControlExposeHeaders,
+			"Content-Length, "+constants.HeaderAccessControlAllowOrigin+", "+constants.HeaderAccessControlAllowHeaders)
+		c.Writer.Header().Set(constants.HeaderAccessControlMaxAge, constants.CORSMaxAge)
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)

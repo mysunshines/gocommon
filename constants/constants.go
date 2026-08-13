@@ -431,6 +431,21 @@ const (
 
 	// HeaderXTraceID 链路追踪 ID 请求头
 	HeaderXTraceID = "X-Trace-ID"
+
+	// HeaderAccessControlAllowOrigin CORS: 允许的来源
+	HeaderAccessControlAllowOrigin = "Access-Control-Allow-Origin"
+
+	// HeaderAccessControlAllowHeaders CORS: 允许的请求头
+	HeaderAccessControlAllowHeaders = "Access-Control-Allow-Headers"
+
+	// HeaderAccessControlAllowMethods CORS: 允许的 HTTP 方法
+	HeaderAccessControlAllowMethods = "Access-Control-Allow-Methods"
+
+	// HeaderAccessControlExposeHeaders CORS: 暴露给浏览器的响应头
+	HeaderAccessControlExposeHeaders = "Access-Control-Expose-Headers"
+
+	// HeaderAccessControlMaxAge CORS: 预检结果缓存时长（秒）
+	HeaderAccessControlMaxAge = "Access-Control-Max-Age"
 )
 
 // ============================================================================
