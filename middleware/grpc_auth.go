@@ -32,7 +32,7 @@ const (
 func GRPCAuthInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
-		authHeaders := md.Get("authorization")
+		authHeaders := md.Get(constants.AuthMetadataKey)
 		authHeader := ""
 		if len(authHeaders) > 0 {
 			authHeader = authHeaders[0]
@@ -57,7 +57,7 @@ func GRPCAuthInterceptor() grpc.UnaryServerInterceptor {
 		}
 
 		// 注入身份到 context
-		if uid, ok := claims["user_id"]; ok {
+		if uid, ok := claims[constants.JWTClaimUserID]; ok {
 			switch v := uid.(type) {
 			case float64:
 				ctx = context.WithValue(ctx, grpcUserIDKey, uint(v))
@@ -67,10 +67,10 @@ func GRPCAuthInterceptor() grpc.UnaryServerInterceptor {
 				ctx = context.WithValue(ctx, grpcUserIDKey, uint(v))
 			}
 		}
-		if role, ok := claims["role"]; ok {
+		if role, ok := claims[constants.JWTClaimRole]; ok {
 			ctx = context.WithValue(ctx, grpcRoleKey, role)
 		}
-		if username, ok := claims["username"]; ok {
+		if username, ok := claims[constants.JWTClaimUsername]; ok {
 			if s, ok := username.(string); ok {
 				ctx = context.WithValue(ctx, grpcUsernameKey, s)
 			}

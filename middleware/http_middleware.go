@@ -179,7 +179,8 @@ func RecoveryMiddleware() gin.HandlerFunc {
 }
 
 // csrfHeader 是 CSRF 防护使用的请求头名称，前后端约定一致。
-const csrfHeader = "X-CSRF-Token"
+// 复用 constants.HeaderCSRFToken，避免头名拼写不一致。
+const csrfHeader = constants.HeaderCSRFToken
 
 // CORSMiddleware 跨域中间件。
 // 允许的来源通过环境变量 CORS_ALLOW_ORIGINS 配置（逗号分隔，支持 "*" 通配）。
@@ -199,7 +200,7 @@ func CORSMiddleware() gin.HandlerFunc {
 		}
 
 		c.Writer.Header().Set("Access-Control-Allow-Headers",
-			"Origin, Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, "+csrfHeader)
+			"Origin, Content-Type, "+constants.HeaderAuthorization+", X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, "+csrfHeader)
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
 		c.Writer.Header().Set("Access-Control-Max-Age", constants.CORSMaxAge)
@@ -232,7 +233,7 @@ func CSRFMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		authHeader := c.GetHeader("Authorization")
+		authHeader := c.GetHeader(constants.HeaderAuthorization)
 		if authHeader == "" {
 			// 未登录：公开写接口，不强制 CSRF 校验
 			c.Next()
@@ -252,7 +253,7 @@ func CSRFMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		expected, _ := claims["csrf"].(string)
+		expected, _ := claims[constants.JWTClaimCSRF].(string)
 		actual := c.GetHeader(csrfHeader)
 		if expected == "" || actual == "" || expected != actual {
 			c.JSON(http.StatusForbidden, gin.H{
@@ -302,7 +303,7 @@ func isOriginAllowed(origin string, allowed []string) bool {
 // 两种模式共用同一套 JWT 解析逻辑，避免重复实现与语义分裂。
 func AuthMiddleware(requireAuth bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
+		authHeader := c.GetHeader(constants.HeaderAuthorization)
 		if authHeader == "" {
 			if requireAuth {
 				c.JSON(http.StatusUnauthorized, gin.H{
@@ -344,13 +345,13 @@ func AuthMiddleware(requireAuth bool) gin.HandlerFunc {
 			return
 		}
 
-		if uid, ok := claims["user_id"]; ok {
+		if uid, ok := claims[constants.JWTClaimUserID]; ok {
 			c.Set(UserIDContextKey, uid)
 		}
-		if uname, ok := claims["username"]; ok {
+		if uname, ok := claims[constants.JWTClaimUsername]; ok {
 			c.Set(UsernameContextKey, uname)
 		}
-		if role, ok := claims["role"]; ok {
+		if role, ok := claims[constants.JWTClaimRole]; ok {
 			c.Set(RoleContextKey, role)
 		}
 		c.Next()

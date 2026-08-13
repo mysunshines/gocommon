@@ -95,7 +95,7 @@ func AuthForwardInterceptor() grpc.UnaryClientInterceptor {
 	) error {
 		// 1) 优先使用 GRPCAuthInterceptor 存入 ctx 的 token
 		if token, ok := middleware.GetGRPCToken(ctx); ok {
-			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", token)
+			ctx = metadata.AppendToOutgoingContext(ctx, constants.AuthMetadataKey, token)
 			// token 可用时 traceID 一并从 context 透传
 			if traceID := middleware.GetTraceIDFromContext(ctx); traceID != "" {
 				ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), traceID)
@@ -104,8 +104,8 @@ func AuthForwardInterceptor() grpc.UnaryClientInterceptor {
 		}
 		// 2) 回退：从入站 metadata 透传 authorization 与 traceID
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			if vals := md.Get("authorization"); len(vals) > 0 {
-				ctx = metadata.AppendToOutgoingContext(ctx, "authorization", vals[0])
+			if vals := md.Get(constants.AuthMetadataKey); len(vals) > 0 {
+				ctx = metadata.AppendToOutgoingContext(ctx, constants.AuthMetadataKey, vals[0])
 			}
 			if vals := md.Get(strings.ToLower(constants.HeaderXTraceID)); len(vals) > 0 {
 				ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), vals[0])
@@ -119,15 +119,15 @@ func AuthForwardInterceptor() grpc.UnaryClientInterceptor {
 // 将 ctx 中的 Authorization 与 traceID 透传到出站 ctx（逻辑同 AuthForwardInterceptor）。
 func ForwardAuth(ctx context.Context) context.Context {
 	if token, ok := middleware.GetGRPCToken(ctx); ok {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", token)
+		ctx = metadata.AppendToOutgoingContext(ctx, constants.AuthMetadataKey, token)
 		if traceID := middleware.GetTraceIDFromContext(ctx); traceID != "" {
 			ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), traceID)
 		}
 		return ctx
 	}
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if vals := md.Get("authorization"); len(vals) > 0 {
-			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", vals[0])
+		if vals := md.Get(constants.AuthMetadataKey); len(vals) > 0 {
+			ctx = metadata.AppendToOutgoingContext(ctx, constants.AuthMetadataKey, vals[0])
 		}
 		if vals := md.Get(strings.ToLower(constants.HeaderXTraceID)); len(vals) > 0 {
 			ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(constants.HeaderXTraceID), vals[0])

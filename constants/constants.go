@@ -477,3 +477,57 @@ const (
 	// RoleAdmin 管理员
 	RoleAdmin uint8 = 2
 )
+
+// ============================================================================
+// 鉴权头与 JWT 声明键（认证链路强约定，跨 HTTP/gRPC 两边必须一致）
+//
+// 注意大小写差异的两层语义：
+//   - HTTP 层：头名 "Authorization" 按 HTTP 规范大小写不敏感，gin 的 GetHeader
+//     内部已做 CanonicalMIMEHeaderKey 规范化，调用方传任意大小写均可；
+//   - gRPC 层：metadata key "authorization" 区分大小写且约定必须小写。
+// 两者语义同源（都承载 Bearer Token），但分属不同协议层，故分别定义常量。
+// ============================================================================
+const (
+	// HeaderAuthorization HTTP 层鉴权头名（Authorization），所有 c.GetHeader 统一引用。
+	HeaderAuthorization = "Authorization"
+
+	// AuthMetadataKey gRPC metadata 层的鉴权键（小写），GRPCAuthInterceptor 从
+	// 入站 metadata 读取 Bearer Token 时统一引用。
+	AuthMetadataKey = "authorization"
+
+	// JWTClaimUserID JWT 中用户 ID 声明键
+	JWTClaimUserID = "user_id"
+
+	// JWTClaimUsername JWT 中用户名声明键
+	JWTClaimUsername = "username"
+
+	// JWTClaimRole JWT 中角色声明键
+	JWTClaimRole = "role"
+
+	// JWTClaimCSRF JWT 中 CSRF 双重提交令牌声明键
+	JWTClaimCSRF = "csrf"
+
+	// HeaderCSRFToken CSRF 防护请求头名，前端回传 JWT 内 csrf 声明时统一使用。
+	HeaderCSRFToken = "X-CSRF-Token"
+)
+
+// ============================================================================
+// 网关指标错误类型（metrics.RecordGatewayError 的 errType 取值）
+// 调用方统一引用，避免字符串拼写不一致导致指标 series 分裂。
+// ============================================================================
+const (
+	// GatewayErrTypeCircuitOpen 熔断器打开导致的请求被拒
+	GatewayErrTypeCircuitOpen = "circuit_open"
+
+	// GatewayErrTypeUpstream 上游调用失败（含超时/不可用/协议错误）
+	GatewayErrTypeUpstream = "upstream"
+)
+
+// ============================================================================
+// 网关转发的业务子路径（拼接在 APIPathPrefix 之后）
+// 多处使用且语义固定，统一收敛避免散落字面量。
+// ============================================================================
+const (
+	// APIPathUserAvatar 用户头像上传/下载路径（网关需要特殊处理 multipart 转发）
+	APIPathUserAvatar = "/user/avatar"
+)
