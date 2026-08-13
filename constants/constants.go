@@ -531,3 +531,32 @@ const (
 	// APIPathUserAvatar 用户头像上传/下载路径（网关需要特殊处理 multipart 转发）
 	APIPathUserAvatar = "/user/avatar"
 )
+
+// ============================================================================
+// 网关 HTTP 层响应码（网关直接返回给前端的 {code,message,data} 中的 code）
+// 这些码与 gocommon 业务错误码（ErrCodeXxx）相互独立：业务码由下游 gRPC 服务
+// 定义（10000+），网关层码由网关自身在发生熔断/转发失败时直接构造。
+// 统一收敛为常量，避免多处硬编码数字导致契约不一致。
+// ============================================================================
+const (
+	// GatewayRespSuccess 成功（与下游业务成功码一致，复用 0）
+	GatewayRespSuccess = 0
+
+	// GatewayRespBadRequest 请求非法（路由无法解析、参数缺失等）
+	GatewayRespBadRequest = 400
+
+	// GatewayRespNotFound 资源/路由不存在
+	GatewayRespNotFound = 404
+
+	// GatewayRespConflict 资源冲突（如重复创建）
+	GatewayRespConflict = 409
+
+	// GatewayRespInternal 网关内部错误（打开文件、读取等）
+	GatewayRespInternal = 500
+
+	// GatewayRespBadGateway 上游（gRPC/HTTP 下游）调用失败
+	GatewayRespBadGateway = 502
+
+	// GatewayRespServiceUnavailable 熔断器打开，服务暂不可用
+	GatewayRespServiceUnavailable = 503
+)
