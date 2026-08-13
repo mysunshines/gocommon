@@ -1,6 +1,8 @@
 // Package constants 定义项目中所有共用的常量
 package constants
 
+import "strings"
+
 // ============================================================================
 // 时间格式常量 - 使用 Go 的 reference time: Mon Jan 2 15:04:05 MST 2006
 // ============================================================================
@@ -560,3 +562,30 @@ const (
 	// GatewayRespServiceUnavailable 熔断器打开，服务暂不可用
 	GatewayRespServiceUnavailable = 503
 )
+
+// ============================================================================
+// 服务名后缀约定
+//
+// 所有下游微服务在 Consul 中的注册名统一带 "-service" 后缀（user-service、
+// article-service 等），而网关对外暴露的 URL 路径使用去掉后缀的短名
+//（/api/v1/user）。该后缀在「资源名→服务名」「服务名→路径前缀」两方向推导中
+// 被反复使用，集中为常量 + 辅助函数，避免散落字面量导致契约不一致。
+// ============================================================================
+
+// ServiceNameSuffix 下游微服务在 Consul 中的统一名称后缀（如 user-service）。
+const ServiceNameSuffix = "-service"
+
+// WithServiceSuffix 为资源名补齐 "-service" 后缀，已带后缀则原样返回。
+// 用于「URL 资源名 → Consul 服务名」推导，如 "user" → "user-service"。
+func WithServiceSuffix(resource string) string {
+	if strings.HasSuffix(resource, ServiceNameSuffix) {
+		return resource
+	}
+	return resource + ServiceNameSuffix
+}
+
+// TrimServiceSuffix 去掉服务名的 "-service" 后缀。
+// 用于「Consul 服务名 → URL 路径短名」推导，如 "user-service" → "user"。
+func TrimServiceSuffix(name string) string {
+	return strings.TrimSuffix(name, ServiceNameSuffix)
+}
