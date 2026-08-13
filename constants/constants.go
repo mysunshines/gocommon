@@ -76,6 +76,12 @@ const (
 	// APIPathPrefix API 版本化路径前缀
 	APIPathPrefix = "/api/v1"
 
+	// AdminAPIPrefix 管理后台对外暴露的路径前缀，网关将 /admin-api/* 反向代理到下游服务。
+	AdminAPIPrefix = "/admin-api"
+
+	// AdminTargetPrefix DynamicAdminProxy 改写后的下游目标路径前缀（接在资源名之前）。
+	AdminTargetPrefix = "/api/v1/admin"
+
 	// HealthCheckPath 健康检查路径，Docker/Consul 探活统一使用
 	HealthCheckPath = "/health"
 
