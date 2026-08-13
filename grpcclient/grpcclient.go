@@ -27,16 +27,16 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	_ "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 )
 
-// defaultServiceConfig 启用 round_robin 负载均衡与 gRPC 健康检查，
-// 配合 grpc.WithDefaultServiceConfig 使用（空 serviceName 表示对健康检查整个连接）。
+// defaultServiceConfig 启用 round_robin 负载均衡，配合 grpc.WithDefaultServiceConfig 使用。
+// 注意：刻意不配置 healthCheckConfig。我们的微服务并未实现 gRPC Health 协议
+// (grpc_health_v1.HealthServer)，若开启健康检查客户端会持续发起 Watch 且永远等不到
+// SERVING 状态；gRPC 新版亦已移除 health 注册包。健康检查由 keepalive + 惰性连接兜底。
 const defaultServiceConfig = `{
-	"loadBalancingPolicy": "round_robin",
-	"healthCheckConfig": { "serviceName": "" }
+	"loadBalancingPolicy": "round_robin"
 }`
 
 // defaultKeepalive 客户端心跳：10s 探测一次，3s 超时，无活动流也发心跳（断线自动重连）。
