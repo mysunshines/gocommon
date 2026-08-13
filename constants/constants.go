@@ -575,6 +575,12 @@ const (
 // ServiceNameSuffix 下游微服务在 Consul 中的统一名称后缀（如 user-service）。
 const ServiceNameSuffix = "-service"
 
+// GRPCServiceNameSuffix gRPC 全限定服务名后缀约定：
+// Consul 服务名去 "-service" 后的 PascalCase 短名 + "Service" 构成 gRPC Service 名
+// （如 user-service -> UserService、article-service -> ArticleService）。
+// 在「服务名 → gRPC Service 名」推导（DeriveGRPCService、handler 兜底）中多处使用。
+const GRPCServiceNameSuffix = "Service"
+
 // WithServiceSuffix 为资源名补齐 "-service" 后缀，已带后缀则原样返回。
 // 用于「URL 资源名 → Consul 服务名」推导，如 "user" → "user-service"。
 func WithServiceSuffix(resource string) string {
