@@ -1754,8 +1754,8 @@ Producer.Send()                           Consumer.ReadMessage()
 ```go
 import "common/metrics"
 
-// 初始化（注册所有指标到 DefaultRegisterer）
-metrics.Init()
+// 初始化（注册所有指标到 DefaultRegisterer），传入服务名用于带 service 标签的指标
+metrics.Init(constants.ServiceNameArticle)
 
 // ========== HTTP 请求指标（由 MetricsMiddleware 自动记录）==========
 metrics.RecordRequest("GET", "/api/v1/users", 200, duration)

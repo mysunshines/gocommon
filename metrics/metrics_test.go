@@ -6,7 +6,7 @@ import (
 )
 
 func TestInitAndRecord(t *testing.T) {
-	Init()
+	Init("test-service")
 	IncrementInFlight()
 	RecordRequest("svc", "GET", "/health", 200, 10*time.Millisecond)
 	RecordError("db")
@@ -26,7 +26,7 @@ func TestInitAndRecord(t *testing.T) {
 }
 
 func ExampleInit() {
-	Init()
+	Init("test-service")
 	IncrementInFlight()
 	RecordRequest("demo", "GET", "/health", 200, 0)
 	RecordError("demo")

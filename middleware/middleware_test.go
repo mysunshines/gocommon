@@ -19,7 +19,7 @@ import (
 
 func TestNewRateLimiter(t *testing.T) {
 	rl := NewRateLimiter(100, 200)
-	if !rl.Allow("k") {
+	if !rl.Allow("/api/v1/user/register", "k") {
 		t.Fatal("first Allow should be true")
 	}
 	l1 := rl.GetLimiter("same")
@@ -34,7 +34,7 @@ func TestUpdateRateLimiter(t *testing.T) {
 	// 验证动态更新阈值后已存在与新建限流器均反映新值。
 	rateLimiter = NewRateLimiter(100, 200)
 	// 先消费一个已存在 key 的 limiter
-	_ = rateLimiter.Allow("existing")
+	_ = rateLimiter.Allow("/api/v1/user/login", "existing")
 
 	UpdateRateLimiter(&config.RateLimitConfig{Enabled: true, QPS: 50, Burst: 80})
 	if rateLimiter.rps != rate.Limit(50) || rateLimiter.burst != 80 {
@@ -253,7 +253,7 @@ func TestRecoveryMiddleware(t *testing.T) {
 	if _, err := config.Load(cfgPath); err != nil {
 		t.Fatal(err)
 	}
-	metrics.Init()
+	metrics.Init("test-service")
 
 	r := gin.New()
 	r.Use(RecoveryMiddleware())
@@ -284,7 +284,7 @@ func TestTimeoutMiddleware(t *testing.T) {
 
 func ExampleNewRateLimiter() {
 	rl := NewRateLimiter(10, 20)
-	_ = rl.Allow("client-ip")
+	_ = rl.Allow("/api/v1/upload", "client-ip")
 }
 
 // ExampleUpdateRateLimiter 演示配置中心热更限流阈值时即时刷新限流器。

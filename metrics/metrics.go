@@ -48,8 +48,12 @@ var (
 	once sync.Once
 )
 
-func Init() {
+// Init 初始化 metrics 子系统（注册 Prometheus 指标）。serviceName 用于给
+// 带 service 标签的指标（如 redis_cache_hits_total）打标，应在启动时传入当前服务名
+// （如 constants.ServiceNameArticle）。
+func Init(serviceName string) {
 	once.Do(func() {
+		serviceName = serviceName
 		requestsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "requests_in_flight",
 			Help: "Number of requests currently being processed",
@@ -239,8 +243,8 @@ func RecordSlowQuery(sql string, duration time.Duration) {
 	slowQueryDuration.WithLabelValues(sql).Observe(duration.Seconds())
 }
 
-// SetServiceName 设置当前服务名，用于给缓存/系统类指标打上 service 标签。
-// 各服务应在 metrics.Init() 之后尽早调用一次（如 metrics.SetServiceName(constants.ServiceNameArticle)）。
+// SetServiceName 覆盖当前服务名（默认在 Init(serviceName) 时设置）。
+// 仅在需要运行时变更服务名时调用；正常情况无需使用。
 func SetServiceName(name string) {
 	serviceName = name
 }
