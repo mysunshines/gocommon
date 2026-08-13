@@ -20,9 +20,14 @@ var (
 	panicCounter      *prometheus.CounterVec
 	mysqlSlowQueries  prometheus.Counter
 	slowQueryDuration *prometheus.HistogramVec
-	redisCacheHits    prometheus.Counter
-	redisCacheMisses  prometheus.Counter
+	redisCacheHits    *prometheus.CounterVec
+	redisCacheMisses  *prometheus.CounterVec
 	redisHotKeys      *prometheus.CounterVec
+
+	// serviceName 为当前服务名（如 constants.ServiceNameArticle），用于给
+	// redis_cache_hits_total / redis_cache_misses_total 打上 service 标签，
+	// 方便在 Prometheus/Grafana 中按服务维度拆分缓存命中率。由 SetServiceName 设置。
+	serviceName string
 
 	httpRequestsTotal  *prometheus.CounterVec
 	rpcRequestsTotal   *prometheus.CounterVec
@@ -99,15 +104,15 @@ func Init() {
 			[]string{"operation"},
 		)
 
-	redisCacheHits = promauto.NewCounter(prometheus.CounterOpts{
-			Name: "redis_cache_hits_total",
-			Help: "Total number of Redis cache hits",
-		})
+	redisCacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "redis_cache_hits_total",
+		Help: "Total number of Redis cache hits",
+	}, []string{"service"})
 
-		redisCacheMisses = promauto.NewCounter(prometheus.CounterOpts{
-			Name: "redis_cache_misses_total",
-			Help: "Total number of Redis cache misses",
-		})
+	redisCacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "redis_cache_misses_total",
+		Help: "Total number of Redis cache misses",
+	}, []string{"service"})
 
 		redisHotKeys = promauto.NewCounterVec(
 			prometheus.CounterOpts{
@@ -234,25 +239,31 @@ func RecordSlowQuery(sql string, duration time.Duration) {
 	slowQueryDuration.WithLabelValues(sql).Observe(duration.Seconds())
 }
 
+// SetServiceName 设置当前服务名，用于给缓存/系统类指标打上 service 标签。
+// 各服务应在 metrics.Init() 之后尽早调用一次（如 metrics.SetServiceName(constants.ServiceNameArticle)）。
+func SetServiceName(name string) {
+	serviceName = name
+}
+
 // RecordRedisHit 记录一次缓存访问结果（命中/未命中）。命中率比率由
 // sum(rate(redis_cache_hits_total[5m])) / (hits + misses) 计算得出，
-// 比原先的 0/1 Gauge 更符合 Prometheus 语义且可跨时间聚合。
+// 比原先的 0/1 Gauge 更符合 Prometheus 语义且可跨时间聚合。指标带 service 标签。
 func RecordRedisHit(hit bool) {
 	if hit {
-		redisCacheHits.Inc()
+		redisCacheHits.WithLabelValues(serviceName).Inc()
 	} else {
-		redisCacheMisses.Inc()
+		redisCacheMisses.WithLabelValues(serviceName).Inc()
 	}
 }
 
-// RecordCacheHit 显式记录一次缓存命中。
+// RecordCacheHit 显式记录一次缓存命中（带 service 标签）。
 func RecordCacheHit() {
-	redisCacheHits.Inc()
+	redisCacheHits.WithLabelValues(serviceName).Inc()
 }
 
-// RecordCacheMiss 显式记录一次缓存未命中。
+// RecordCacheMiss 显式记录一次缓存未命中（带 service 标签）。
 func RecordCacheMiss() {
-	redisCacheMisses.Inc()
+	redisCacheMisses.WithLabelValues(serviceName).Inc()
 }
 
 func RecordHotKey(key string) {

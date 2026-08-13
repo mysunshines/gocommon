@@ -1824,12 +1824,13 @@ HTTP 层:
 
 缓存:
   cache_operations_total{operation, status}             ← Counter
-  redis_cache_hits_total                                ← Counter
-  redis_cache_misses_total                              ← Counter
+  redis_cache_hits_total{service}                       ← Counter
+  redis_cache_misses_total{service}                     ← Counter
   redis_hot_keys_total{key}                             ← Counter
 
   # 命中率比率（推荐在 PromQL 中计算，而非直接采集 0/1 Gauge）：
   # sum(rate(redis_cache_hits_total[5m])) / clamp_min(sum(rate(redis_cache_hits_total[5m])) + sum(rate(redis_cache_misses_total[5m])), 0)
+  # 按服务拆分：sum(rate(redis_cache_hits_total{service="article-service"}[5m])) / ...
 
 RPC:
   rpc_requests_total{service, method, status}           ← Counter
