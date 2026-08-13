@@ -148,8 +148,22 @@ type MetricsConfig struct {
 
 type RateLimitConfig struct {
 	Enabled bool `yaml:"enabled"` // 是否启用限流
-	QPS     int  `yaml:"qps"`     // 每秒允许请求数（速率）
-	Burst   int  `yaml:"burst"`   // 突发容量（瞬时最大放行数）
+	QPS     int  `yaml:"qps"`     // 全局默认每秒允许请求数（速率），作为无规则匹配时的兜底
+	Burst   int  `yaml:"burst"`   // 全局默认突发容量（瞬时最大放行数）
+
+	// Rules 路由级限流规则（可选）。按请求路径前缀匹配，命中第一条即采用该规则，
+	// 用于对写操作（注册/登录/发文章/发评论等）施加比全局更严格的限流。
+	// 未命中任何规则时回退到全局 QPS/Burst。
+	Rules []RateLimitRule `yaml:"rules,omitempty"`
+}
+
+// RateLimitRule 单条路由级限流规则。
+//   - MatchPaths：路径前缀列表（前缀匹配，如 "/api/v1/auth/register"），命中其一即应用本规则；
+//   - QPS/Burst：本规则使用的速率与突发容量。
+type RateLimitRule struct {
+	MatchPaths []string `yaml:"paths"` // 需要匹配的路径前缀（任一命中即生效）
+	QPS        int      `yaml:"qps"`    // 该规则每秒允许请求数
+	Burst      int      `yaml:"burst"`  // 该规则突发容量
 }
 
 // CORSConfig 跨域资源共享配置（HTTP 直连调试 / Web 前端调用时需要）。

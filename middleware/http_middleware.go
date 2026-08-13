@@ -57,8 +57,14 @@ func RateLimitMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// 限流 key：已登录用户用 userID（防账号级刷接口），未登录用客户端 IP（防单 IP 刷）。
+		// 这样写操作（发布/评论/注册/登录）即便攻击者换 IP，也会受单账号限速约束。
 		key := c.ClientIP()
-		if !rateLimiter.Allow(key) {
+		if uid, err := GetUserIDFromContext(c); err == nil && uid != 0 {
+			key = "u:" + strconv.FormatUint(uint64(uid), 10)
+		}
+
+		if !rateLimiter.Allow(c.Request.URL.Path, key) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"code":    429,
 				"message": "Too Many Requests",
