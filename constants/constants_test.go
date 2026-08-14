@@ -20,16 +20,6 @@ func TestErrorCodes(t *testing.T) {
 		{"ErrCodeServiceUnavailable", ErrCodeServiceUnavailable, 10006},
 		{"ErrCodeTimeout", ErrCodeTimeout, 10007},
 		{"ErrCodeRateLimited", ErrCodeRateLimited, 10008},
-		{"ErrCodeUserExists", ErrCodeUserExists, 20001},
-		{"ErrCodeTokenInvalid", ErrCodeTokenInvalid, 20002},
-		{"ErrCodePasswordIncorrect", ErrCodePasswordIncorrect, 20003},
-		{"ErrCodeUserInBlacklist", ErrCodeUserInBlacklist, 20004},
-		{"ErrCodeUserNotFound", ErrCodeUserNotFound, 20005},
-		{"ErrCodeTokenExpired", ErrCodeTokenExpired, 20006},
-		{"ErrCodeArticleNotFound", ErrCodeArticleNotFound, 30001},
-		{"ErrCodeCommentNotFound", ErrCodeCommentNotFound, 40001},
-		{"ErrCodeCommentDisabled", ErrCodeCommentDisabled, 40003},
-		{"ErrCodeCommentBlacklist", ErrCodeCommentBlacklist, 40004},
 	}
 	for _, c := range checks {
 		if c.got != c.want {

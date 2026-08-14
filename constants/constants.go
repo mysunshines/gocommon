@@ -276,25 +276,6 @@ const (
 	ErrCodeRateLimited = 10008
 )
 
-// 各服务向网关暴露的业务错误码（与各服务 proto/errors 保持一致）
-const (
-	// ---- 用户服务 (20000-29999) ----
-	ErrCodeUserExists          = 20001
-	ErrCodeTokenInvalid        = 20002
-	ErrCodePasswordIncorrect   = 20003
-	ErrCodeUserInBlacklist     = 20004
-	ErrCodeUserNotFound        = 20005
-	ErrCodeTokenExpired        = 20006
-
-	// ---- 文章服务 (30000-39999) ----
-	ErrCodeArticleNotFound = 30001
-
-	// ---- 评论服务 (40000-49999) ----
-	ErrCodeCommentNotFound  = 40001
-	ErrCodeCommentDisabled  = 40003
-	ErrCodeCommentBlacklist = 40004
-)
-
 // ============================================================================
 // 运维相关默认值
 // ============================================================================

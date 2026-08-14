@@ -99,42 +99,6 @@ func ParamError(c *gin.Context, message string) {
 	ErrorWithStatus(c, http.StatusBadRequest, constants.ErrCodeBadRequest, message)
 }
 
-func UserNotFound(c *gin.Context) {
-	Error(c, constants.ErrCodeUserNotFound, "User not found")
-}
-
-func ArticleNotFound(c *gin.Context) {
-	Error(c, constants.ErrCodeArticleNotFound, "Article not found")
-}
-
-func CommentNotFound(c *gin.Context) {
-	Error(c, constants.ErrCodeCommentNotFound, "Comment not found")
-}
-
-func PasswordIncorrect(c *gin.Context) {
-	Error(c, constants.ErrCodePasswordIncorrect, "Password incorrect")
-}
-
-func UserExists(c *gin.Context) {
-	Error(c, constants.ErrCodeUserExists, "User already exists")
-}
-
-func InvalidToken(c *gin.Context) {
-	Error(c, constants.ErrCodeTokenInvalid, "Invalid token")
-}
-
-func TokenExpired(c *gin.Context) {
-	Error(c, constants.ErrCodeTokenExpired, "Token expired")
-}
-
 func PermissionDenied(c *gin.Context) {
 	Error(c, constants.ErrCodeForbidden, "Permission denied")
-}
-
-func CommentDisabled(c *gin.Context) {
-	Error(c, constants.ErrCodeCommentDisabled, "Comment is disabled for this article")
-}
-
-func InBlacklist(c *gin.Context) {
-	Error(c, constants.ErrCodeCommentBlacklist, "You are in blacklist")
 }

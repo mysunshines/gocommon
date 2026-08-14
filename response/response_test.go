@@ -99,16 +99,7 @@ func TestErrorHelpers(t *testing.T) {
 		{"InternalServerError", withMsg(InternalServerError), 10005, http.StatusInternalServerError},
 		{"TooManyRequests", withMsg(TooManyRequests), 10008, http.StatusTooManyRequests},
 		{"ParamError", withMsg(ParamError), 10001, http.StatusBadRequest},
-		{"UserNotFound", UserNotFound, 20005, http.StatusOK},
-		{"ArticleNotFound", ArticleNotFound, 30001, http.StatusOK},
-		{"CommentNotFound", CommentNotFound, 40001, http.StatusOK},
-		{"PasswordIncorrect", PasswordIncorrect, 20003, http.StatusOK},
-		{"UserExists", UserExists, 20001, http.StatusOK},
-		{"InvalidToken", InvalidToken, 20002, http.StatusOK},
-		{"TokenExpired", TokenExpired, 20006, http.StatusOK},
 		{"PermissionDenied", PermissionDenied, 10003, http.StatusOK},
-		{"CommentDisabled", CommentDisabled, 40003, http.StatusOK},
-		{"InBlacklist", InBlacklist, 40004, http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
