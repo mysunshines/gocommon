@@ -12,6 +12,7 @@ import (
 	"github.com/mysunshines/gocommon/resilience"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -146,7 +147,15 @@ func SendRequestWithFallback(ctx context.Context, api string, req, resp proto.Me
 	ctx = resilience.WithServiceKey(ctx, alias)
 
 	traceID := middleware.GetTraceIDFromContext(ctx)
+	ctxKV := middleware.DumpContext(ctx)
 	start := time.Now()
+
+	if log.IsDebug() {
+		if reqJSON, err := protojson.Marshal(req); err == nil {
+			log.Debugf("[gRPC-Client] traceID=%v | ctxKV=%v | method=%s | target=%s | req=%s",
+				traceID, ctxKV, fullMethod, entry.Target, string(reqJSON))
+		}
+	}
 
 	invoke := func(c context.Context) error {
 		return conn.Invoke(c, fullMethod, req, resp)
@@ -164,9 +173,15 @@ func SendRequestWithFallback(ctx context.Context, api string, req, resp proto.Me
 	latency := time.Since(start)
 
 	if invokeErr != nil {
-		log.Errorf("[gRPC-Client] traceID=%v | method=%s | target=%s | latency=%v | err=%v",
-			traceID, fullMethod, entry.Target, latency, invokeErr)
+		log.Errorf("[gRPC-Client] traceID=%v | ctxKV=%v | method=%s | target=%s | latency=%v | err=%v",
+			traceID, ctxKV, fullMethod, entry.Target, latency, invokeErr)
 		return fmt.Errorf("grpcclient: 调用 %s 失败: %w", fullMethod, invokeErr)
+	}
+	if log.IsDebug() {
+		if respJSON, err := protojson.Marshal(resp); err == nil {
+			log.Debugf("[gRPC-Client] traceID=%v | ctxKV=%v | method=%s | target=%s | latency=%v | resp=%s",
+				traceID, ctxKV, fullMethod, entry.Target, latency, string(respJSON))
+		}
 	}
 	log.Infof("[gRPC-Client] traceID=%v | method=%s | target=%s | latency=%v",
 		traceID, fullMethod, entry.Target, latency)

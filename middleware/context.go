@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -82,4 +84,54 @@ func SetTraceIDToContext(ctx context.Context, traceID string) context.Context {
 
 func generateTraceID() string {
 	return time.Now().Format(constants.DateTimeCompact) + "-" + util.GenerateRandomString(8)
+}
+
+// DumpContext 遍历 context 链，返回其中携带的所有 key/value（均转成 readable 字符串）。
+// 用于 debug 日志打印链路上下文（trace_id、user_id 等），避免逐一手动取字段漏打。
+//
+// 实现说明：标准库未提供遍历 context value 的公开 API，此处通过反射读取
+// valueCtx.Key/Value 字段，并沿 Context 父链向上；当 ctx 为 *gin.Context 时，
+// 额外读取其 Keys map（gin 的 Value 走方法而非字段，反射字段取不到）。
+// 反射遍历设置了深度上限与已访问指针去重，避免异常 context 导致死循环。
+func DumpContext(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	if ctx == nil {
+		return out
+	}
+
+	// *gin.Context：直接读其 Keys map。
+	if gc, ok := ctx.(*gin.Context); ok {
+		for k, v := range gc.Keys {
+			out[k] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	v := reflect.ValueOf(ctx)
+	visited := map[uintptr]bool{}
+	for depth := 0; depth < 16 && v.IsValid() && !v.IsNil(); depth++ {
+		if v.Kind() == reflect.Ptr && v.Elem().IsValid() {
+			// valueCtx 携带 Key/Value 字段。
+			if key := v.Elem().FieldByName("Key"); key.IsValid() && key.CanInterface() {
+				if val := v.Elem().FieldByName("Value"); val.IsValid() && val.CanInterface() {
+					out[fmt.Sprintf("%v", key.Interface())] = fmt.Sprintf("%v", val.Interface())
+				}
+			}
+			// 沿 Context 父链向上。
+			parent := v.Elem().FieldByName("Context")
+			if !parent.IsValid() || !parent.CanInterface() {
+				break
+			}
+			pv := reflect.ValueOf(parent.Interface())
+			if pv.Kind() == reflect.Ptr && pv.Pointer() != 0 {
+				if visited[pv.Pointer()] {
+					break
+				}
+				visited[pv.Pointer()] = true
+			}
+			v = pv
+			continue
+		}
+		break
+	}
+	return out
 }

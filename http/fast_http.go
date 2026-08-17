@@ -346,13 +346,17 @@ func (c *FastClient) do(ctx context.Context, req *fasthttp.Request, resp *fastht
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
-	log.WithFields(logrus.Fields{
+	fastFields := logrus.Fields{
 		constants.LogFieldTraceID: traceID,
 		"method":                  string(req.Header.Method()),
 		"url":                     string(req.URI().FullURI()),
 		"status":                  resp.StatusCode(),
 		"duration":                time.Since(start).String(),
-	}).Debugf("[httpclient:fast] request completed")
+	}
+	if log.IsDebug() {
+		fastFields["ctx_kv"] = middleware.DumpContext(ctx)
+	}
+	log.WithFields(fastFields).Debugf("[httpclient:fast] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,

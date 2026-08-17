@@ -360,6 +360,9 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		fields["req_body"] = string(compactJSON(reqBody))
 		fields["resp_body"] = string(compactJSON(body))
 	}
+	if log.IsDebug() {
+		fields["ctx_kv"] = middleware.DumpContext(req.Context())
+	}
 	log.WithFields(fields).Debugf("[httpclient] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode,

@@ -86,6 +86,16 @@ func Debug(args ...interface{}) {
 	GetLogger().Debug(args...)
 }
 
+// IsDebug 返回当前日志级别是否开启 debug，调用方可用其前置判断是否执行
+// 高开销的日志拼装（如 protojson 序列化 body），避免非 debug 场景下浪费 CPU。
+func IsDebug() bool {
+	// 尚未初始化时按默认级别（info）处理，视为未开启 debug。
+	if logger == nil {
+		return constants.DefaultLogLevel == "debug"
+	}
+	return logger.GetLevel() <= logrus.DebugLevel
+}
+
 func Debugf(format string, args ...interface{}) {
 	GetLogger().Debugf(format, args...)
 }
