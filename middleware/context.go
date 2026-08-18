@@ -108,8 +108,16 @@ func DumpContext(ctx context.Context) map[string]string {
 
 	v := reflect.ValueOf(ctx)
 	visited := map[uintptr]bool{}
-	for depth := 0; depth < 16 && v.IsValid() && !v.IsNil(); depth++ {
-		if v.Kind() == reflect.Ptr && v.Elem().IsValid() {
+	for depth := 0; depth < 16 && v.IsValid(); depth++ {
+		// IsNil 仅对指针/接口/map/chan/func/slice 有效，结构体（如
+		// context.emptyCtx、gin.Context 等）调用会 panic，必须先用 Kind 守卫。
+		if v.Kind() != reflect.Ptr {
+			break
+		}
+		if v.IsNil() {
+			break
+		}
+		if v.Elem().IsValid() {
 			// valueCtx 携带 Key/Value 字段。
 			if key := v.Elem().FieldByName("Key"); key.IsValid() && key.CanInterface() {
 				if val := v.Elem().FieldByName("Value"); val.IsValid() && val.CanInterface() {
