@@ -106,6 +106,27 @@ func DumpContext(ctx context.Context) map[string]string {
 		}
 	}
 
+	// *gin.Context：除了上面直接读 Keys 外，其底层 Request.Context() 也是一条
+	// valueCtx 链（如 TraceMiddleware 注入的 trace_id），需要一并遍历。
+	if gc, ok := ctx.(*gin.Context); ok {
+		dumpValueChain(gc.Request.Context(), out)
+		return out
+	}
+
+	dumpValueChain(ctx, out)
+	return out
+}
+
+// dumpValueChain 反射遍历标准 context.Context 的 valueCtx 链，将 key/value 写入 out。
+//
+// 关于私有 key 类型的友好名映射：中间件的 traceIDKey / UserIDKey 是未导出的
+// contextKey（底层 string）类型，valueCtx.Key 反射取出后若直接 %v 打印虽能得到
+// "trace_id" 等字符串，但一旦 key 类型为私有 struct 或指针，%v 会退化为地址或空值，
+// 导致 debug 日志 ctxKV 看起来为空。因此这里对 contextKey 类型做特判，取其底层
+// string 作为稳定、可读的 key 名，确保 trace_id / user_id 始终可见。
+func dumpValueChain(ctx context.Context, out map[string]string) {
+	contextKeyType := reflect.TypeOf(traceIDKey)
+
 	v := reflect.ValueOf(ctx)
 	visited := map[uintptr]bool{}
 	for depth := 0; depth < 16 && v.IsValid(); depth++ {
@@ -119,10 +140,11 @@ func DumpContext(ctx context.Context) map[string]string {
 		}
 		if v.Elem().IsValid() {
 			// valueCtx 携带 Key/Value 字段。
-			if key := v.Elem().FieldByName("Key"); key.IsValid() && key.CanInterface() {
-				if val := v.Elem().FieldByName("Value"); val.IsValid() && val.CanInterface() {
-					out[fmt.Sprintf("%v", key.Interface())] = fmt.Sprintf("%v", val.Interface())
-				}
+			key := v.Elem().FieldByName("Key")
+			val := v.Elem().FieldByName("Value")
+			if key.IsValid() && key.CanInterface() && val.IsValid() && val.CanInterface() {
+				keyName := friendlyKeyName(key, contextKeyType)
+				out[keyName] = fmt.Sprintf("%v", val.Interface())
 			}
 			// 沿 Context 父链向上。
 			parent := v.Elem().FieldByName("Context")
@@ -141,5 +163,16 @@ func DumpContext(ctx context.Context) map[string]string {
 		}
 		break
 	}
-	return out
+}
+
+// friendlyKeyName 将反射取出的 valueCtx.Key 转为可读的 key 名。
+// 若 Key 类型为本包 contextKey（私有类型，底层 string），返回其底层 string 值，
+// 保证 trace_id / user_id 等稳定可见；否则回退到 %v。
+func friendlyKeyName(key reflect.Value, contextKeyType reflect.Type) string {
+	if key.Type() == contextKeyType {
+		if s, ok := key.Interface().(contextKey); ok {
+			return string(s)
+		}
+	}
+	return fmt.Sprintf("%v", key.Interface())
 }

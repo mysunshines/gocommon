@@ -128,7 +128,7 @@ func ExampleSingleFlightDo() {
 
 // ExampleLocalCacheSet 演示内存缓存 — 用于热点数据、配置项
 func ExampleLocalCacheSet() {
-	LocalCacheSet("config:site_name", "我的博客")
+	LocalCacheSet("config:site_name", "Blog")
 	LocalCacheSet("config:max_page_size", 50)
 
 	if val, ok := LocalCacheGet("config:site_name"); ok {

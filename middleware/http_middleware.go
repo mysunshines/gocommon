@@ -151,11 +151,9 @@ func LoggingMiddleware() gin.HandlerFunc {
 
 		// debug 级别下打印请求与响应明细（含 query + body，请求体已限制最大 4KB 防止日志膨胀）
 		if debugEnabled {
-			log.Debugf("[HTTP-REQ] traceID=%v | method=%s | path=%s | query=%s | body=%s",
-				traceID, method, path, raw, string(reqBody))
+			log.Debugf("[HTTP-REQ] traceID=%v | method=%s | path=%s | query=%s | body=%s", traceID, method, path, raw, string(reqBody))
 			if bw, ok := c.Writer.(*bodyCaptureWriter); ok {
-				log.Debugf("[HTTP-RESP] traceID=%v | method=%s | path=%s | status=%d | body=%s",
-					traceID, method, path, statusCode, bw.body.String())
+				log.Debugf("[HTTP-RESP] traceID=%v | method=%s | path=%s | status=%d | body=%s", traceID, method, path, statusCode, bw.body.String())
 			}
 		}
 	}
@@ -199,11 +197,9 @@ func CORSMiddleware() gin.HandlerFunc {
 			// 不在白名单：不设置 Allow-Origin，浏览器将拒绝跨域读取响应
 		}
 
-		c.Writer.Header().Set(constants.HeaderAccessControlAllowHeaders,
-			"Origin, Content-Type, "+constants.HeaderAuthorization+", X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, "+csrfHeader)
+		c.Writer.Header().Set(constants.HeaderAccessControlAllowHeaders, "Origin, Content-Type, "+constants.HeaderAuthorization+", X-Requested-With, Accept, Cache-Control, Content-Length, Accept-Encoding, "+csrfHeader)
 		c.Writer.Header().Set(constants.HeaderAccessControlAllowMethods, "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-		c.Writer.Header().Set(constants.HeaderAccessControlExposeHeaders,
-			"Content-Length, "+constants.HeaderAccessControlAllowOrigin+", "+constants.HeaderAccessControlAllowHeaders)
+		c.Writer.Header().Set(constants.HeaderAccessControlExposeHeaders, "Content-Length, "+constants.HeaderAccessControlAllowOrigin+", "+constants.HeaderAccessControlAllowHeaders)
 		c.Writer.Header().Set(constants.HeaderAccessControlMaxAge, constants.CORSMaxAge)
 
 		if c.Request.Method == "OPTIONS" {
@@ -305,6 +301,9 @@ func isOriginAllowed(origin string, allowed []string) bool {
 func AuthMiddleware(requireAuth bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader(constants.HeaderAuthorization)
+		if log.IsDebug() {
+			log.Debugf("[auth] traceID=%s | path=%s | requireAuth=%v | Authorization=%s", c.GetHeader(constants.HeaderXTraceID), c.Request.URL.Path, requireAuth, authHeader)
+		}
 		if authHeader == "" {
 			if requireAuth {
 				c.JSON(http.StatusUnauthorized, gin.H{
