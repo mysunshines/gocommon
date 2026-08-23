@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
@@ -173,4 +174,21 @@ func detectOutboundIP() string {
 		}
 	}
 	return "127.0.0.1"
+}
+
+// CanaryFromEnv 从环境变量 BLOG_CANARY（或 CANARY）读取金丝雀标记，
+// 值为 "true"/"1"/"yes"/"on"（大小写不敏感）时返回 true。
+// 供各服务 main.go 注册到 Consul 时直接填充 Registration.Canary，
+// 实现同一份镜像按环境变量区分 stable / canary 实例，无需改代码。
+func CanaryFromEnv() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("BLOG_CANARY")))
+	if v == "" {
+		v = strings.ToLower(strings.TrimSpace(os.Getenv("CANARY")))
+	}
+	switch v {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
