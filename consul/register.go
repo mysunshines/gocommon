@@ -40,6 +40,12 @@ type Registration struct {
 	CheckInterval int
 	// DeregisterCritical 实例持续 critical 多久后自动注销（秒），默认 30
 	DeregisterCritical int
+	// Version 服务版本号（如 v1.4.0），写入 Consul Meta["version"]。
+	// 用于蓝绿/金丝雀发布（gateway 按 version 分流）。为空时不写入。
+	Version string
+	// Canary 是否为金丝雀实例。true 时写入 Consul Meta["canary"]="true"，
+	// gateway 的加权路由可据此将部分流量导向该实例。
+	Canary bool
 }
 
 // Register 将服务注册到 Consul，并返回注销函数。
@@ -88,19 +94,26 @@ func Register(r Registration) (func() error, error) {
 		port = r.HTTPPort
 	}
 
+	// 把 gRPC 与 HTTP 端口都写入 Meta，使 Consul 成为端口信息的唯一事实源。
+	// 同时写入 version / canary，供 gateway 蓝绿/金丝雀按版本分流。
+	meta := map[string]string{
+		"grpc_port": fmt.Sprintf("%d", r.GRPCPort),
+		"http_port": fmt.Sprintf("%d", r.HTTPPort),
+	}
+	if r.Version != "" {
+		meta["version"] = r.Version
+	}
+	if r.Canary {
+		meta["canary"] = "true"
+	}
+
 	body := map[string]interface{}{
 		"ID":      instanceID,
 		"Name":    r.Name,
 		"Address": addr,
 		"Port":    port,
 		"Check":   check,
-		// 把 gRPC 与 HTTP 端口都写入 Meta，使 Consul 成为端口信息的唯一事实源。
-		// 网关（如 /admin-api/ 透传）据此动态解析下游 HTTP 端口，无需在 nginx 或
-		// 网关配置中写死 article-service 的 8082 等端口号。
-		"Meta": map[string]string{
-			"grpc_port": fmt.Sprintf("%d", r.GRPCPort),
-			"http_port": fmt.Sprintf("%d", r.HTTPPort),
-		},
+		"Meta":    meta,
 	}
 
 	payload, err := json.Marshal(body)

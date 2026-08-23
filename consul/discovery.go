@@ -1,7 +1,10 @@
 package consul
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -465,4 +468,168 @@ func resolveConsulService(alias string) string {
 		return strings.ToLower(alias[:idx]) + "-service"
 	}
 	return alias
+}
+
+// ===========================================================================
+// 蓝绿 / 金丝雀发布：版本感知的加权路由选择（想法 2）
+// ===========================================================================
+
+// RoutingPolicy 描述某服务的流量分流策略。
+//
+// 语义：
+//   - StableVersion：稳定版本号（Consul Meta["version"]）。为空表示不限制稳定版本
+//     （即所有非金丝雀实例都算 stable）。
+//   - CanaryVersion：金丝雀版本号（Consul Meta["version"]）。为空但 CanaryOnly=true
+//     时，所有 Meta["canary"]="true" 的实例都算 canary。
+//   - CanaryWeight：导向 canary 实例的流量百分比（0~100）。0 表示全走 stable（蓝绿
+//     的「全稳定」态）；100 表示全走 canary。
+//
+// 典型用法：
+//   - 金丝雀 10%：{CanaryWeight:10, CanaryVersion:"v1.5.0"}
+//   - 蓝绿切流  ：{StableVersion:"v1.4.0", CanaryVersion:"v1.5.0", CanaryWeight:100}
+//     表示 100% 走 v1.5.0。
+type RoutingPolicy struct {
+	StableVersion string `json:"stable_version"`
+	CanaryVersion string `json:"canary_version"`
+	CanaryWeight  int    `json:"canary_weight"`
+}
+
+// instanceIsCanary 判断实例是否属于金丝雀集合（按 Meta）。
+func instanceIsCanary(inst *Instance, p RoutingPolicy) bool {
+	if inst == nil {
+		return false
+	}
+	if v, ok := inst.Meta["canary"]; ok && v == "true" {
+		// 显式标记 canary 的实例，只要没指定 CanaryVersion 就归入 canary 集合。
+		return p.CanaryVersion == "" || inst.Meta["version"] == p.CanaryVersion
+	}
+	if p.CanaryVersion != "" && inst.Meta["version"] == p.CanaryVersion {
+		return true
+	}
+	return false
+}
+
+// instanceIsStable 判断实例是否属于稳定集合（非 canary 且版本匹配/不限）。
+func instanceIsStable(inst *Instance, p RoutingPolicy) bool {
+	if inst == nil || instanceIsCanary(inst, p) {
+		return false
+	}
+	if p.StableVersion == "" {
+		return true
+	}
+	return inst.Meta["version"] == p.StableVersion
+}
+
+// PickWithPolicy 按路由策略从健康实例中加权挑选一个实例。
+//
+// 行为：
+//   - 将健康实例分为 stable / canary 两组；
+//   - 以 CanaryWeight% 概率挑选 canary 组，否则挑 stable 组；
+//   - 任一组为空时回退到另一组，保证流量不中断；两组皆空才报错。
+//
+// 该方法是「想法 2」蓝绿/金丝雀的路由核心，gateway 在每次请求解析下游时调用，
+// 即可实现按版本比例的流量分流（即便只有单个 gateway 实例也成立）。
+func (d *Discovery) PickWithPolicy(ctx context.Context, service string, policy RoutingPolicy) (*Instance, error) {
+	healthy, herr := d.GetHealthyInstances(ctx, service)
+	if herr != nil || len(healthy) == 0 {
+		// 健康查询失败/无健康实例：降级到全量实例（与 Pick 一致）。
+		all, aerr := d.GetInstances(ctx, service)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if len(all) == 0 {
+			return nil, fmt.Errorf("consul discovery: no available instance for service %q", service)
+		}
+		healthy = all
+	}
+
+	var stable, canary []*Instance
+	for _, inst := range healthy {
+		if instanceIsCanary(inst, policy) {
+			canary = append(canary, inst)
+		} else if instanceIsStable(inst, policy) {
+			stable = append(stable, inst)
+		} else {
+			// 既非 canary 也非指定 stable 版本的实例：归入 stable 兜底，
+			// 避免 StableVersion 配错时把所有实例都丢弃。
+			stable = append(stable, inst)
+		}
+	}
+
+	useCanary := false
+	if len(canary) > 0 && len(stable) > 0 {
+		useCanary = rand.Intn(100) < policy.CanaryWeight
+	} else if len(canary) > 0 {
+		// 没有 stable 实例时，宁可走 canary 也不整体不可用。
+		useCanary = true
+	}
+
+	pool := stable
+	if useCanary {
+		pool = canary
+	}
+	if len(pool) == 0 {
+		// 兜底：任意一组为空则用另一组。
+		if len(canary) > 0 {
+			pool = canary
+		} else {
+			pool = stable
+		}
+	}
+	if len(pool) == 0 {
+		return nil, fmt.Errorf("consul discovery: no routable instance for service %q under policy", service)
+	}
+	return pool[rand.Intn(len(pool))], nil
+}
+
+// RoutingPolicyKey 返回某服务在 Consul KV 中的路由策略 key。
+const RoutingPolicyKeyPrefix = "blog/routing/"
+
+// GetRoutingPolicy 从 Consul KV 读取指定服务的路由策略。
+// key 为 blog/routing/<service> 的 JSON。不存在时返回零值策略（全 stable）。
+func (d *Discovery) GetRoutingPolicy(ctx context.Context, service string) (RoutingPolicy, error) {
+	var p RoutingPolicy
+	path := fmt.Sprintf("/v1/kv/%s%s", RoutingPolicyKeyPrefix, service)
+	var raw []struct {
+		Value string `json:"Value"` // base64 编码
+	}
+	if err := d.get(ctx, path, "kv.get", service, &raw); err != nil {
+		// KV 不存在（404）时视为无策略。
+		return p, nil
+	}
+	if len(raw) == 0 || raw[0].Value == "" {
+		return p, nil
+	}
+	dec, err := base64.StdEncoding.DecodeString(raw[0].Value)
+	if err != nil {
+		return p, fmt.Errorf("consul kv decode routing policy for %s: %w", service, err)
+	}
+	if err := json.Unmarshal(dec, &p); err != nil {
+		return p, fmt.Errorf("consul kv parse routing policy for %s: %w", service, err)
+	}
+	return p, nil
+}
+
+// SetRoutingPolicy 将路由策略写入 Consul KV（base64 编码的 JSON）。
+func (d *Discovery) SetRoutingPolicy(ctx context.Context, service string, p RoutingPolicy) error {
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/v1/kv/%s%s", RoutingPolicyKeyPrefix, service)
+	url := fmt.Sprintf("http://%s%s", d.consulAddr, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("consul kv put routing policy for %s: %w", service, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("consul kv put routing policy for %s: status %d", service, resp.StatusCode)
+	}
+	return nil
 }

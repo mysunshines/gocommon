@@ -65,9 +65,18 @@ func Init(cfg *config.RedisConfig) error {
 		// 启动跨实例本地缓存失效监听
 		go startCacheInvalidationListener()
 
-		log.Info("Redis initialized successfully")
+		// 明确标记多实例缓存失效通道已就绪：这是「多实例状态一致性」的关键保障。
+		// LocalCacheDelete 会通过 Redis pub/sub 广播失效，其他实例监听后删除本地旧值，
+		// 从而保证多实例最终一致（配合 localCache 30s TTL 兜底）。
+		log.Info("Redis initialized; multi-instance local-cache invalidation (pub/sub) is ACTIVE")
 	})
 	return initErr
+}
+
+// InvalidationActive 返回跨实例缓存失效广播是否就绪（Redis 已初始化即视为就绪）。
+// 可供 /health 等健康检查在响应中声明，便于运维确认多实例一致性保障已生效。
+func InvalidationActive() bool {
+	return redisReady()
 }
 
 func GetClient() *redis.Client {
@@ -563,11 +572,14 @@ func LocalCacheGet(key string) (interface{}, bool) {
 	return localCache.Get(key)
 }
 
-// LocalCacheSet 设置本地缓存，并广播失效通知给其他实例
+// LocalCacheSet 设置本地缓存。
+//
+// 注意：写入本地缓存【不】广播失效通知。原因：多个实例可能在几乎同时回源并各自
+// Set 同一 key，若此处也广播失效，会互相删除对方刚写入的缓存，造成缓存抖动、命中率
+// 下降。正确的失效时机是「数据发生变更」的 LocalCacheDelete（见下文），由它在更新
+// DB 后广播，通知其他实例清除旧值。配合 localCache 的 30s TTL 兜底，多实例最终一致。
 func LocalCacheSet(key string, value interface{}) {
 	localCache.Set(key, value)
-	// 通知其他实例清除该 key 的本地缓存，保证多实例数据一致性
-	PublishCacheInvalidation(context.Background(), key)
 }
 
 // LocalCacheDelete 删除本地缓存，并广播失效通知给其他实例
