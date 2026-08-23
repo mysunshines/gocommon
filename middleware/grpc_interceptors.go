@@ -10,7 +10,10 @@ import (
 	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
+	"github.com/mysunshines/gocommon/observability"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -46,14 +49,32 @@ func GRPCMetricsInterceptor(service string) grpc.UnaryServerInterceptor {
 // 当日志级别为 debug 时，额外以 [gRPC-REQ] / [gRPC-RESP] 打印请求与响应体（JSON）。
 func GRPCLoggingInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// 从 gRPC 入站 metadata 提取 traceID（由 Gateway forwardRequest 透传）
-		traceID := ""
+		// 用 W3C 传播器从入站 metadata 提取 traceparent（otelgrpc 客户端会自动注入），
+		// 与 HTTP 侧保持同一套传播协议，形成跨服务真实 span 树（B 方案）。
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			carrier := propagation.HeaderCarrier{}
+			for k, v := range md {
+				carrier[k] = v
+			}
+			ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+		}
+		// 为本次 RPC 开一个 span（OTel 未初始化时 no-op，不影响日志流程）。
+		tracer := observability.Tracer()
+		spanCtx, span := tracer.Start(ctx, info.FullMethod)
+		defer span.End()
+		ctx = spanCtx
+
+		// 从 gRPC 入站 metadata 提取 traceID（由 Gateway forwardRequest 透传），
+		// 作为日志的 trace_id label（A 方案 / Loki 查询用）。
+		traceID := observability.TraceIDFromContext(spanCtx)
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			if vals := md.Get(strings.ToLower(constants.HeaderXTraceID)); len(vals) > 0 {
 				traceID = vals[0]
-				// 注入 context，下游 MySQL/Redis 可通过 GetTraceIDFromContext 获取
-				ctx = SetTraceIDToContext(ctx, traceID)
 			}
+		}
+		if traceID != "" {
+			// 注入 context，下游 MySQL/Redis 可通过 GetTraceIDFromContext 获取
+			ctx = SetTraceIDToContext(ctx, traceID)
 		}
 
 		start := time.Now()

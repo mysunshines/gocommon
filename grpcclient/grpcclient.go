@@ -25,6 +25,7 @@ import (
 	"github.com/mysunshines/gocommon/middleware"
 
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -60,7 +61,10 @@ func Dial(target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(defaultServiceConfig),
 		grpc.WithKeepaliveParams(defaultKeepalive),
-		grpc.WithChainUnaryInterceptor(AuthForwardInterceptor()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithChainUnaryInterceptor(
+			AuthForwardInterceptor(),
+		),
 	}
 	all := append(base, opts...)
 	conn, err := grpc.NewClient(target, all...)

@@ -27,6 +27,24 @@ type Config struct {
 	CORS      CORSConfig      `yaml:"cors,omitempty"` // CORS 跨域配置（article 等需要 HTTP 直连的服务）
 	Mail      MailConfig      `yaml:"mail,omitempty"` // 邮件配置（user 等需要发信的服务）
 	MinIO     MinIOConfig     `yaml:"minio"`      // 对象存储配置（文件上传统一落 MinIO）
+	Loki      LokiConfig      `yaml:"loki"`       // Loki 集中日志（想法 3 · 方案 A）
+	OTel      OTelConfig      `yaml:"otel"`       // OpenTelemetry 链路追踪（想法 3 · 方案 B）
+}
+
+// LokiConfig Loki 集中日志配置（想法 3 · 方案 A）。
+// 为空 / 不配置时自动降级，仅保留本地日志，不影响现有部署。
+type LokiConfig struct {
+	Enabled  bool   `yaml:"enabled"`   // 是否启用 Loki 推送
+	URL      string `yaml:"url"`       // Loki push 地址，如 http://loki:3100/loki/api/v1/push
+	TenantID string `yaml:"tenant_id"` // 多租户 ID（可选，空则不带 X-Scope-OrgID）
+}
+
+// OTelConfig OpenTelemetry 链路追踪配置（想法 3 · 方案 B）。
+// OTLP 导出器默认走 otel-collector（再由 collector 转发到 Tempo/Jaeger）。
+// Endpoint 为空 / 不配置时降级：不采集 trace，但 TraceID 取数逻辑仍可用。
+type OTelConfig struct {
+	Enabled  bool   `yaml:"enabled"`   // 是否启用 trace 采集
+	Endpoint string `yaml:"endpoint"`  // otel-collector gRPC 地址，如 otel-collector:4317
 }
 
 // MinIOConfig 对象存储（MinIO / S3 兼容）配置。

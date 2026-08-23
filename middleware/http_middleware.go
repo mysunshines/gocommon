@@ -15,9 +15,12 @@ import (
 	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
+	"github.com/mysunshines/gocommon/observability"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	logrus "github.com/sirupsen/logrus"
 )
 
@@ -460,19 +463,45 @@ func ValidateRequestMiddleware() gin.HandlerFunc {
 	}
 }
 
+// TraceMiddleware 链路追踪中间件（想法 3 · A+B 统一入口）。
+//
+// 设计要点：trace id 的来源从「自研随机串」升级为「OpenTelemetry 的 TraceID」，
+// 从而让日志（A 方案 / Loki）与链路追踪（B 方案 / Tempo·Jaeger）共用同一个 ID：
+//
+//   - 优先用 OTel 的 W3C traceparent 传播器提取/生成 span，span 的 TraceID 即全链路 ID；
+//   - 该 TraceID 同时写入 X-Trace-ID 响应头（前端兼容）与 context（下游日志/组件读取）；
+//   - 若 OTel 未初始化（未调用 observability.InitTracer），退化为原行为：使用入站
+//     X-Trace-ID 头或自研随机串，完全不影响现有部署。
+//
+// 注意：W3C 传播器在 HTTP 层自动把 traceparent 注入/提取，配合 gRPC 侧 otelgrpc
+// 拦截器即可形成跨服务 span 树（真实链路追踪）。
 func TraceMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		traceID := c.GetHeader(constants.HeaderXTraceID)
+		// 用 W3C 传播器从入站头提取/生成 traceparent（支持前端/上游透传真实 parent）。
+		ctx := otel.GetTextMapPropagator().Extract(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
+
+		// 开一个 span（OTel 未初始化时返回 no-op span，TraceID 为空）。
+		tracer := observability.Tracer()
+		spanCtx, span := tracer.Start(ctx, c.Request.Method+" "+c.FullPath())
+		defer span.End()
+
+		traceID := observability.TraceIDFromContext(spanCtx)
 		if traceID == "" {
-			traceID = generateTraceID()
+			// 降级路径：沿用原 X-Trace-ID 头或自研随机串。
+			traceID = c.GetHeader(constants.HeaderXTraceID)
+			if traceID == "" {
+				traceID = generateTraceID()
+			}
 		}
+
 		c.Set(constants.HeaderXTraceID, traceID)
-		// 在业务逻辑执行前写入响应头。
+		// 在业务逻辑执行前写入响应头（前端可拿此 ID 去 Grafana/Loki 查链路）。
 		// 注意：若下游反向代理响应中也有同名头，网管通过 ModifyResponse 剥离下游的避免重复。
 		c.Header(constants.HeaderXTraceID, traceID)
-		// 同时注入 context.Context，方便 MySQL/Redis/gRPC 下游组件通过 GetTraceIDFromContext 获取
-		ctx := context.WithValue(c.Request.Context(), traceIDKey, traceID)
-		c.Request = c.Request.WithContext(ctx)
+		// 注入 context.Context，方便 MySQL/Redis/gRPC 下游组件通过 GetTraceIDFromContext 获取。
+		// 同时把 spanCtx 透传下去，使后续 otelgrpc 拦截器能正确挂接子 span。
+		reqCtx := context.WithValue(spanCtx, traceIDKey, traceID)
+		c.Request = c.Request.WithContext(reqCtx)
 		c.Next()
 	}
 }
