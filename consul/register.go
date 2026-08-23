@@ -192,3 +192,16 @@ func CanaryFromEnv() bool {
 		return false
 	}
 }
+
+// VersionFromEnv 返回服务注册到 Consul 时使用的版本号。
+// 优先读取环境变量 SERVICE_VERSION（金丝雀/蓝绿发布时由部署脚本注入，
+// 例如 make canary-deploy SERVICE=article-service CANARY_VERSION=v1.5.1）；
+// 若未设置则回退到 defaultVersion（通常是 -ldflags "-X main.Version=xxx" 注入的构建版本）。
+// 这样同一份镜像既能在常规部署下上报真实构建版本，
+// 也能在临时起金丝雀副本时通过 env 覆盖为 canary 版本号，供路由策略按版本选路。
+func VersionFromEnv(defaultVersion string) string {
+	if v := strings.TrimSpace(os.Getenv("SERVICE_VERSION")); v != "" {
+		return v
+	}
+	return defaultVersion
+}
