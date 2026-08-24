@@ -115,6 +115,12 @@ const (
 
 	// DefaultHTTPRequestTimeout HTTP 中间件整体请求默认超时 (秒)
 	DefaultHTTPRequestTimeout = 30
+
+	// DefaultCallTimeout 出站调用（gRPC/HTTP）默认超时 (秒)。
+	// 作为 resilience 的兜底超时：Redis 客户端已 fail-fast 到 1s，
+	// 出站下游调用同样应快速失败，避免下游故障时长时间占用连接与协程
+	// （历史默认沿用 HTTP ReadTimeout=30s，故障时挂起时间过长）。
+	DefaultCallTimeout = 3
 )
 
 // ============================================================================

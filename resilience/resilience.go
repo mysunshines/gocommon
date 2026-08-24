@@ -105,18 +105,20 @@ func ForService(serviceKey string) Policy {
 	return defaultPolicy()
 }
 
-// defaultPolicy 返回零配置下的兜底策略：仅超时（沿用 gRPC/HTTP 既有默认值），
-// 不启用熔断/限流，避免无配置时行为突变。
+// defaultPolicy 返回零配置下的兜底策略：仅超时（出站调用默认 3s，见
+// constants.DefaultCallTimeout），不启用熔断/限流，避免无配置时行为突变。
+// 注意：3s 是"调用方视角"的下游出站超时，与 HTTP Server 侧 30s 读超时无关，
+// 也不会影响 configcenter/consul 的阻塞查询（它们不经过本默认策略）。
 func defaultPolicy() Policy {
 	return Policy{
-		Timeout: constants.DefaultReadTimeout * time.Second,
+		Timeout: constants.DefaultCallTimeout * time.Second,
 	}
 }
 
 // normalize 补全策略中缺失的默认值，使后续读取者拿到即可用的完整配置。
 func normalize(p Policy) Policy {
 	if p.Timeout <= 0 {
-		p.Timeout = constants.DefaultReadTimeout * time.Second
+		p.Timeout = constants.DefaultCallTimeout * time.Second
 	}
 	if p.Circuit.Enabled {
 		if p.Circuit.MaxRequests <= 0 {

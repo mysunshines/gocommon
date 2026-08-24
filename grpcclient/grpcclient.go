@@ -47,6 +47,13 @@ var defaultKeepalive = keepalive.ClientParameters{
 	PermitWithoutStream: true,
 }
 
+// defaultConnectParams 限制建连/重连的最小超时：gRPC 默认 MinConnectTimeout 为 20s，
+// 目标不可达时连接建立会长时间处于挂起状态。这里收紧到 5s，配合 resilience 的
+// 出站调用超时（constants.DefaultCallTimeout=3s）实现快速失败，避免协程被占住。
+var defaultConnectParams = grpc.ConnectParams{
+	MinConnectTimeout: 5 * time.Second,
+}
+
 // Dial 创建到 target（host:port）的 *grpc.ClientConn，已内置：
 //   - insecure 传输凭证（内部可信网络）；
 //   - round_robin 负载均衡 + 健康检查；
@@ -61,6 +68,7 @@ func Dial(target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(defaultServiceConfig),
 		grpc.WithKeepaliveParams(defaultKeepalive),
+		grpc.WithConnectParams(defaultConnectParams),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(
 			AuthForwardInterceptor(),

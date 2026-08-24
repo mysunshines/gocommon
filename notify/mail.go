@@ -9,7 +9,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"mime"
+	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,16 +149,26 @@ func writeAlternative(buf *bytes.Buffer, msg Message) {
 	}
 }
 
+// smtpSessionTimeout SMTP 会话整体超时：覆盖握手/鉴权/收件/正文写入的读写。
+// net/smtp 自身不提供命令级超时，若服务器不响应会无限阻塞，因此对整个会话
+// 设置 deadline（普通发送远小于该值，仅为防挂起兜底）。
+const smtpSessionTimeout = 30 * time.Second
+
 func sendSMTP(ctx context.Context, cfg Config, from string, to []string, data []byte) error {
 	traceID := middleware.GetTraceIDFromContext(ctx)
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	var auth smtp.Auth
 	if cfg.Username != "" {
 		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 	}
 
+	// 统一带超时建连：net.DialTimeout / tls.DialWithDialer 均在拨号阶段设超时，
+	// 避免 SMTP 服务器不可达时挂起（历史 tls.Dial / smtp.SendMail 均无超时参数）。
+	dialer := &net.Dialer{Timeout: constants.DefaultDialTimeout * time.Second}
+	var conn net.Conn
+	var err error
 	if cfg.UseTLS {
-		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: cfg.Host})
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: cfg.Host})
 		if err != nil {
 			log.WithFields(logrus.Fields{
 				constants.LogFieldTraceID: traceID,
@@ -165,78 +177,92 @@ func sendSMTP(ctx context.Context, cfg Config, from string, to []string, data []
 			}).Errorf("[notify] tls dial failed")
 			return fmt.Errorf("notify: tls dial %s failed: %w", addr, err)
 		}
-		defer conn.Close()
-		c, err := smtp.NewClient(conn, cfg.Host)
+	} else {
+		conn, err = dialer.Dial("tcp", addr)
 		if err != nil {
 			log.WithFields(logrus.Fields{
 				constants.LogFieldTraceID: traceID,
 				"addr":                    addr,
 				"err":                     err.Error(),
-			}).Errorf("[notify] smtp client failed")
-			return fmt.Errorf("notify: smtp client failed: %w", err)
+			}).Errorf("[notify] smtp dial failed")
+			return fmt.Errorf("notify: smtp dial %s failed: %w", addr, err)
 		}
-		defer c.Quit()
-		if auth != nil {
-			if err := c.Auth(auth); err != nil {
+	}
+	defer conn.Close()
+	// 会话级 deadline：任何卡住的 SMTP 交互都会在此超时返回错误
+	_ = conn.SetDeadline(time.Now().Add(smtpSessionTimeout))
+
+	c, err := smtp.NewClient(conn, cfg.Host)
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    addr,
+			"err":                     err.Error(),
+		}).Errorf("[notify] smtp client failed")
+		return fmt.Errorf("notify: smtp client failed: %w", err)
+	}
+	defer c.Quit()
+	if !cfg.UseTLS {
+		// 与原 smtp.SendMail 行为一致：服务器支持时自动升级 STARTTLS
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
 				log.WithFields(logrus.Fields{
 					constants.LogFieldTraceID: traceID,
 					"addr":                    addr,
 					"err":                     err.Error(),
-				}).Errorf("[notify] smtp auth failed")
-				return fmt.Errorf("notify: smtp auth failed: %w", err)
+				}).Errorf("[notify] smtp STARTTLS failed")
+				return fmt.Errorf("notify: smtp STARTTLS failed: %w", err)
 			}
 		}
-		if err := c.Mail(from); err != nil {
-			log.WithFields(logrus.Fields{
-				constants.LogFieldTraceID: traceID,
-				"from":                    from,
-				"err":                     err.Error(),
-			}).Errorf("[notify] smtp MAIL FROM failed")
-			return fmt.Errorf("notify: smtp MAIL FROM failed: %w", err)
-		}
-		for _, rcpt := range to {
-			if err := c.Rcpt(rcpt); err != nil {
-				log.WithFields(logrus.Fields{
-					constants.LogFieldTraceID: traceID,
-					"rcpt":                    rcpt,
-					"err":                     err.Error(),
-				}).Errorf("[notify] smtp RCPT failed")
-				return fmt.Errorf("notify: smtp RCPT %s failed: %w", rcpt, err)
-			}
-		}
-		w, err := c.Data()
-		if err != nil {
-			log.WithFields(logrus.Fields{
-				constants.LogFieldTraceID: traceID,
-				"err":                     err.Error(),
-			}).Errorf("[notify] smtp DATA failed")
-			return fmt.Errorf("notify: smtp DATA failed: %w", err)
-		}
-		if _, err := w.Write(data); err != nil {
-			log.WithFields(logrus.Fields{
-				constants.LogFieldTraceID: traceID,
-				"err":                     err.Error(),
-			}).Errorf("[notify] write mail body failed")
-			return fmt.Errorf("notify: write mail body failed: %w", err)
-		}
-		if err := w.Close(); err != nil {
-			log.WithFields(logrus.Fields{
-				constants.LogFieldTraceID: traceID,
-				"err":                     err.Error(),
-			}).Errorf("[notify] close mail data failed")
-			return err
-		}
-		return nil
 	}
-
-	if err := smtp.SendMail(addr, auth, from, to, data); err != nil {
+	if auth != nil {
+		if err := c.Auth(auth); err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"addr":                    addr,
+				"err":                     err.Error(),
+			}).Errorf("[notify] smtp auth failed")
+			return fmt.Errorf("notify: smtp auth failed: %w", err)
+		}
+	}
+	if err := c.Mail(from); err != nil {
 		log.WithFields(logrus.Fields{
 			constants.LogFieldTraceID: traceID,
-			"addr":                    addr,
 			"from":                    from,
-			"to":                      strings.Join(to, ","),
 			"err":                     err.Error(),
-		}).Errorf("[notify] smtp SendMail failed")
+		}).Errorf("[notify] smtp MAIL FROM failed")
+		return fmt.Errorf("notify: smtp MAIL FROM failed: %w", err)
+	}
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			log.WithFields(logrus.Fields{
+				constants.LogFieldTraceID: traceID,
+				"rcpt":                    rcpt,
+				"err":                     err.Error(),
+			}).Errorf("[notify] smtp RCPT failed")
+			return fmt.Errorf("notify: smtp RCPT %s failed: %w", rcpt, err)
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"err":                     err.Error(),
+		}).Errorf("[notify] smtp DATA failed")
+		return fmt.Errorf("notify: smtp DATA failed: %w", err)
+	}
+	if _, err := w.Write(data); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"err":                     err.Error(),
+		}).Errorf("[notify] write mail body failed")
+		return fmt.Errorf("notify: write mail body failed: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"err":                     err.Error(),
+		}).Errorf("[notify] close mail data failed")
 		return err
 	}
 	return nil
