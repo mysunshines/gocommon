@@ -47,11 +47,19 @@ func Init(cfg *config.RedisConfig) error {
 	var initErr error
 	initOnce.Do(func() {
 		keyPrefix = cfg.KeyPrefix
+		// 显式设置短超时并禁用自动重试，实现 fail fast：
+		// go-redis 默认 DialTimeout=5s/ReadTimeout=3s/WriteTimeout=3s 且 MaxRetries=3，
+		// Redis 故障时单次操作最长可空等 10s+，会拖垮依赖链路。
+		// 改为 1s 超时 + 不重试：正常内网延迟毫秒级无影响，故障时快速失败由上层降级。
 		rdb = redis.NewClient(&redis.Options{
-			Addr:     cfg.Addr(),
-			Password: cfg.Password,
-			DB:       cfg.DB,
-			PoolSize: cfg.PoolSize,
+			Addr:         cfg.Addr(),
+			Password:     cfg.Password,
+			DB:           cfg.DB,
+			PoolSize:     cfg.PoolSize,
+			DialTimeout:  1 * time.Second,
+			ReadTimeout:  1 * time.Second,
+			WriteTimeout: 1 * time.Second,
+			MaxRetries:   -1, // 禁用自动重试
 		})
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
