@@ -656,7 +656,42 @@ case <-time.After(time.Second):
 // ========== 本地缓存（进程内热点数据，纳秒级）==========
 cache.LocalCacheSet("hot:article:1", articleData)
 val, ok := cache.LocalCacheGet("hot:article:1")
+
+// ========== 热点感知 API（配合 Consul 配置中心热策略）==========
+// 未命中任何热策略时，以下 API 行为与 Set/Get 完全一致，可平滑切换。
+cache.SetSmart(ctx, "article:detail:42", articleData, 5*time.Minute)
+data, err := cache.GetSmart(ctx, "article:detail:42")      // 本地缓存 → 随机分片 → Redis
+raw, err := cache.GetBytesSmart(ctx, "article:detail:42")  // 原始字节（序列化对象场景）
+cache.DeleteSmart(ctx, "article:detail:42")                 // 删全分片 + 本地缓存 + 跨实例失效广播
+exists, _ := cache.ExistsSmart(ctx, "article:detail:42")
+cache.ExpireSmart(ctx, "article:detail:42", 30*time.Minute)
 ```
+
+### 热策略配置（Consul 配置中心动态下发）
+
+`Set / SetNX / Expire` 的 TTL 与 `*Smart` 系列的分片/本地缓存策略，均可通过 **Consul 配置中心**按 key 在线动态下发，秒级生效、无需发版。
+
+- **按 key 动态 TTL**（`redis_ttl`）：命中模式的 key 写入 TTL 被覆盖（`Set/SetNX/Expire` 内部自动套用，业务零改动）；未命中时保持调用方传入的默认值。
+- **hot key 调整**（`hot_keys`）：分片分散（单 key QPS 均摊到 N 个 Redis 分片）+ 本地缓存（热点读卸载到进程内内存，多实例经 pub/sub 失效广播保证最终一致）。
+
+**下发方式**：将 YAML/JSON 写入 Consul KV `config/<service>/<env>`（由 `configcenter.HotConfig.Cache` 承载，`apply` 时自动同步到本包 `cache.SetPolicy`）：
+
+```yaml
+cache:
+  redis_ttl:                  # 按 key 模式覆盖 TTL（秒），支持 * 通配符，精确模式（模式更长者）优先
+    "verify_code:*": 300
+    "session:*": 1800
+    "article:views:*": 86400
+  hot_keys:                   # 热点 key 策略，key 为模式（支持 * 通配符）
+    "article:detail:42":      # 精确模式优先于通配符
+      shard_count: 8          # 分片数（1–64）：>1 时拆成 key:0..N-1，写全量、读随机
+      local_cache_ttl: 5      # 本地缓存秒数：>0 时读取先查进程内缓存，miss 回源并回填
+    "user:info:*":
+      shard_count: 4
+      local_cache_ttl: 10
+```
+
+> 修改 Consul KV 后由 `Watch` 长轮询即时感知；热点策略集合变化时会自动清空本地缓存，避免旧 TTL 的脏值残留。
 
 ### 底层原理
 

@@ -3,6 +3,7 @@ package configcenter
 import (
 	"sync/atomic"
 
+	"github.com/mysunshines/gocommon/cache"
 	"github.com/mysunshines/gocommon/config"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/middleware"
@@ -16,11 +17,12 @@ import (
 //   - RateLimit：入站限流阈值，应对突发流量/异常调用最常调整（别人调我）
 //   - JWTExpireTime：登录时效
 //   - Resilience：出站韧性策略，按下游 serviceKey 分别配置超时/熔断/限流（我调别人）
+//   - Cache：缓存热策略（按 key 动态 TTL + hot key 分片/本地缓存），apply 时同步到 cache 包
 //
 // 基础设施配置（Database / Redis / Consul 地址与连接池）不在此列，
 // 因为它们往往需重建连接或重启才安全，仍走 config_xxx.yaml + 环境变量。
 //
-// 字段刻意复用 config/resilience 包的既有类型，保持单一数据来源，
+// 字段刻意复用 config/resilience/cache 包的既有类型，保持单一数据来源，
 // 后台写入的 YAML 字段名与各包一致，降低运维心智负担。
 //
 // 关于 RateLimit 与 Resilience 的语义区分：
@@ -33,6 +35,7 @@ type HotConfig struct {
 	JWTExpireTime int                             `yaml:"jwt_expire_time" json:"jwt_expire_time"`
 	Resilience    map[string]resilience.PolicySpec `yaml:"resilience" json:"resilience"`
 	Server        *config.ServerConfig            `yaml:"server" json:"server"`
+	Cache         cache.PolicyConfig              `yaml:"cache" json:"cache"`
 }
 
 // ServiceConfig 是单个服务接入配置中心的句柄：持有最新热更配置快照，
@@ -137,8 +140,14 @@ func (sc *ServiceConfig) apply(hc *HotConfig) {
 		c.Server = *hc.Server
 	}
 
-	log.Infof("configcenter: applied hot config for %s/%s (log_level=%s qps=%d burst=%d jwt=%ds resilience=%d)",
-		sc.service, sc.env, hc.LogLevel, hc.RateLimit.QPS, hc.RateLimit.Burst, hc.JWTExpireTime, len(hc.Resilience))
+	// 缓存热策略同步到 cache 包：
+	//   - RedisTTL：Set/SetNX/Expire 按 key 动态覆盖 TTL（无需改调用方）；
+	//   - HotKeys：GetSmart/SetSmart 等热感知 API 的分片与本地缓存策略。
+	// 即使 YAML 未写 cache 段（零值）也会执行，语义为"清空/恢复默认策略"。
+	cache.SetPolicy(&hc.Cache)
+
+	log.Infof("configcenter: applied hot config for %s/%s (log_level=%s qps=%d burst=%d jwt=%ds resilience=%d cache_ttl=%d hot_keys=%d)",
+		sc.service, sc.env, hc.LogLevel, hc.RateLimit.QPS, hc.RateLimit.Burst, hc.JWTExpireTime, len(hc.Resilience), len(hc.Cache.RedisTTL), len(hc.Cache.HotKeys))
 }
 
 // Get 返回当前最新的热更配置快照（线程安全，无锁读取）。

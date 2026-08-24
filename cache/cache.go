@@ -120,10 +120,13 @@ func logRedisOp(ctx context.Context, op, key string, err error) {
 	}
 }
 
+// Set 写入缓存。expiration 为默认 TTL：若配置中心 RedisTTL 中配置了该 key 的
+// 动态 TTL，则优先使用配置值（见 ResolveTTL）。
 func Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
 	if !redisReady() {
 		return fmt.Errorf("redis not initialized")
 	}
+	expiration = ResolveTTL(key, expiration)
 	err := rdb.Set(ctx, GetKey(key), value, expiration).Err()
 	logRedisOp(ctx, "SET", key, err)
 	return err
@@ -134,6 +137,7 @@ func SetNX(ctx context.Context, key string, value interface{}, expiration time.D
 	if !redisReady() {
 		return false, fmt.Errorf("redis not initialized")
 	}
+	expiration = ResolveTTL(key, expiration)
 	ok, err := rdb.SetNX(ctx, GetKey(key), value, expiration).Result()
 	logRedisOp(ctx, "SETNX", key, err)
 	return ok, err
@@ -192,7 +196,10 @@ func Incr(ctx context.Context, key string) (int64, error) {
 	return val, err
 }
 
+// Expire 设置过期时间。expiration 为默认值，若配置中心 RedisTTL 配置了该 key
+// 的动态 TTL 则优先使用配置值（见 ResolveTTL）。
 func Expire(ctx context.Context, key string, expiration time.Duration) error {
+	expiration = ResolveTTL(key, expiration)
 	err := rdb.Expire(ctx, GetKey(key), expiration).Err()
 	logRedisOp(ctx, "EXPIRE", key, err)
 	return err
@@ -582,6 +589,12 @@ func LocalCacheSet(key string, value interface{}) {
 	localCache.Set(key, value)
 }
 
+// LocalCacheSetWithTTL 以自定义 TTL 写入本地缓存，用于 hot key 本地缓存策略。
+// 注意同样遵循「写入不广播」约定：需要使其他实例失效时请调用 LocalCacheDelete。
+func LocalCacheSetWithTTL(key string, value interface{}, ttl time.Duration) {
+	localCache.SetWithTTL(key, value, ttl)
+}
+
 // LocalCacheDelete 删除本地缓存，并广播失效通知给其他实例
 func LocalCacheDelete(key string) {
 	localCache.Delete(key)
@@ -601,6 +614,11 @@ func (lc *LocalCache) Get(key string) (interface{}, bool) {
 }
 
 func (lc *LocalCache) Set(key string, value interface{}) {
+	lc.SetWithTTL(key, value, lc.expire)
+}
+
+// SetWithTTL 以自定义 TTL 写入本地缓存（hot key 本地缓存策略使用配置的 LocalCacheTTL）。
+func (lc *LocalCache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if len(lc.data) >= lc.maxSize {
@@ -611,7 +629,7 @@ func (lc *LocalCache) Set(key string, value interface{}) {
 	}
 	lc.data[key] = &cacheItem{
 		value:      value,
-		expireTime: time.Now().Add(lc.expire),
+		expireTime: time.Now().Add(ttl),
 	}
 }
 
