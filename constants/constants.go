@@ -311,6 +311,11 @@ const (
 	// 便于在日志系统中按 traceID 串联同一请求的跨服务/跨组件调用链。
 	LogFieldTraceID = "traceID"
 
+	// LokiAppLabel 上报到 Loki 时统一携带的 app label 值（如 "blog"）。
+	// 这是「上报端（gocommon/log）」与「查询端（gateway trace API）」之间的跨仓库
+	// 契约：两端必须引用同一常量，否则按 trace_id 聚合全链路日志时因 app 不匹配而查不到。
+	LokiAppLabel = "blog"
+
 	// LogInitMsg 日志初始化消息
 	LogInitMsg = "Logger initialized"
 

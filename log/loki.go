@@ -192,7 +192,7 @@ func (h *LokiHook) push(entries []lokiEntry) error {
 		if !ok {
 			st = &lokiStream{
 				Stream: map[string]string{
-					"app":      "blog",
+					"app":      constants.LokiAppLabel,
 					"service":  nonEmpty(e.service, "unknown"),
 					"level":    nonEmpty(e.level, "info"),
 					"trace_id": nonEmpty(e.traceID, "none"),
