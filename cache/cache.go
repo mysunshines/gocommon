@@ -480,6 +480,21 @@ func startCacheInvalidationListener() {
 	}
 }
 
+// BloomFilter 哈希常量（双哈希 double hashing 实现，见 Add/Exists）：
+//   - bloomHashSeed：murmur3 的固定种子。取 0xcc9e2d51 ^ 0x1b873593（两个经典
+//     魔数异或）而非直接用 0——murmur3 在 0 种子下对空串/短串区分度差。
+//     固定种子保证同一 value 在多实例、多次重启后哈希结果一致
+//     （Redis bitmap 持久化在服务端，哈希必须可复现）。
+//   - bloomHashIncrement：双哈希步长。只需算一次主哈希 fp，第 i 个哈希位
+//     = (fp + i*increment) % size；0x5bd1e995 是与 2^32 互质的奇数
+//     （MurmurHash 黄金比例乘数），保证 i 个哈希位均匀铺满位空间、不聚集。
+// 用法约束：Add 与 Exists 必须使用完全相同的 seed/increment，
+// 否则同一 value 算出的位集合不一致，会出现「已加入的元素查不到」。
+const (
+	bloomHashSeed      = 0xcc9e2d51 ^ 0x1b873593
+	bloomHashIncrement = 0x5bd1e995
+)
+
 type BloomFilter struct {
 	key    string // Redis 中位数组键名（已带 KeyPrefix）
 	size   uint64 // 位数组大小（bit 数）
@@ -496,20 +511,40 @@ func NewBloomFilter(key string, size, hashes uint64) *BloomFilter {
 
 func (bf *BloomFilter) Add(ctx context.Context, value string) error {
 	pipe := rdb.Pipeline()
-	// 使用 SeedSum64 配合组合种子值
-	fp := murmur3.SeedSum64(0xcc9e2d51^0x1b873593, []byte(value))
+	// 主哈希 + 双哈希增量生成 hashes 个位，seed/increment 见 bloomHashSeed/bloomHashIncrement
+	fp := murmur3.SeedSum64(bloomHashSeed, []byte(value))
 	for i := uint64(0); i < bf.hashes; i++ {
-		pipe.SetBit(ctx, bf.key, int64((fp+uint64(i)*0x5bd1e995)%bf.size), 1)
+		pipe.SetBit(ctx, bf.key, int64((fp+uint64(i)*bloomHashIncrement)%bf.size), 1)
 	}
 	_, err := pipe.Exec(ctx)
 	logRedisOp(ctx, "BFADD", bf.key, err)
 	return err
 }
 
+// AddBulk 批量添加元素（单次 pipeline 一次往返写入），用于启动预热等海量灌入场景。
+// 逐条 Add 每条一次 RTT，千万级用户预热会退化为千万次往返；批量写入按批收敛为
+// 一次往返（Redis 侧命令仍逐条执行，本实现以内存换吞吐，注意控制每批 size）。
+func (bf *BloomFilter) AddBulk(ctx context.Context, values []string) error {
+	if !redisReady() {
+		return fmt.Errorf("bloom filter AddBulk: redis not initialized")
+	}
+	pipe := rdb.Pipeline()
+	for _, value := range values {
+		fp := murmur3.SeedSum64(bloomHashSeed, []byte(value))
+		for i := uint64(0); i < bf.hashes; i++ {
+			pipe.SetBit(ctx, bf.key, int64((fp+uint64(i)*bloomHashIncrement)%bf.size), 1)
+		}
+	}
+	_, err := pipe.Exec(ctx)
+	logRedisOp(ctx, "BFADDBULK", bf.key, err)
+	return err
+}
+
 func (bf *BloomFilter) Exists(ctx context.Context, value string) (bool, error) {
-	fp := murmur3.SeedSum64(0xcc9e2d51^0x1b873593, []byte(value))
+	// 与 Add 使用完全相同的 seed/increment，保证对同一 value 算出的位一致
+	fp := murmur3.SeedSum64(bloomHashSeed, []byte(value))
 	for i := uint64(0); i < bf.hashes; i++ {
-		bit, err := rdb.GetBit(ctx, bf.key, int64((fp+uint64(i)*0x5bd1e995)%bf.size)).Result()
+		bit, err := rdb.GetBit(ctx, bf.key, int64((fp+uint64(i)*bloomHashIncrement)%bf.size)).Result()
 		if err != nil {
 			return false, err
 		}
