@@ -53,7 +53,26 @@ var (
 // （如 constants.ServiceNameArticle）。
 func Init(serviceName string) {
 	once.Do(func() {
-		serviceName = serviceName
+		initMetrics(serviceName)
+	})
+}
+
+// ensureInit 保证指标已注册：服务未（或尚未）调用 Init 时，以 "unknown"
+// 服务名惰性初始化。所有 Record*/Set*/Inc* 入口前置调用，
+// 防止 panic 恢复等兜底路径在 Init 之前触发 nil 解引用二次 panic。
+func ensureInit() {
+	once.Do(func() {
+		initMetrics("unknown")
+	})
+}
+
+// initMetrics 实际的指标注册逻辑，仅由 Init/ensureInit 经 sync.Once 调用一次。
+// name 赋给包级 serviceName（供 RecordRedisHit 等带 service 标签的指标使用）。
+// 注意：参数不可命名为 serviceName —— 会遮蔽包级变量，历史实现因此从未把
+// 服务名写入包级变量（redis_cache_hits_total 的 service 标签为空串）。
+func initMetrics(name string) {
+	serviceName = name
+	{
 		requestsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "requests_in_flight",
 			Help: "Number of requests currently being processed",
@@ -214,24 +233,28 @@ func Init(serviceName string) {
 			},
 			[]string{"type"},
 		)
-	})
+	}
 }
 
 func RecordRequest(service, method, endpoint string, status int, duration time.Duration) {
+	ensureInit()
 	requestsInFlight.Dec()
 	requestDuration.WithLabelValues(service, method, endpoint).Observe(duration.Seconds())
 	httpRequestsTotal.WithLabelValues(service, method, endpoint, strconv.Itoa(status)).Inc()
 }
 
 func IncrementInFlight() {
+	ensureInit()
 	requestsInFlight.Inc()
 }
 
 func RecordError(errorType string) {
+	ensureInit()
 	errorsTotal.WithLabelValues(errorType).Inc()
 }
 
 func UpdateSystemMetrics() {
+	ensureInit()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	memoryUsage.Set(float64(m.Alloc))
@@ -239,6 +262,7 @@ func UpdateSystemMetrics() {
 }
 
 func RecordSlowQuery(sql string, duration time.Duration) {
+	ensureInit()
 	mysqlSlowQueries.Inc()
 	slowQueryDuration.WithLabelValues(sql).Observe(duration.Seconds())
 }
@@ -253,6 +277,7 @@ func SetServiceName(name string) {
 // sum(rate(redis_cache_hits_total[5m])) / (hits + misses) 计算得出，
 // 比原先的 0/1 Gauge 更符合 Prometheus 语义且可跨时间聚合。指标带 service 标签。
 func RecordRedisHit(hit bool) {
+	ensureInit()
 	if hit {
 		redisCacheHits.WithLabelValues(serviceName).Inc()
 	} else {
@@ -262,36 +287,44 @@ func RecordRedisHit(hit bool) {
 
 // RecordCacheHit 显式记录一次缓存命中（带 service 标签）。
 func RecordCacheHit() {
+	ensureInit()
 	redisCacheHits.WithLabelValues(serviceName).Inc()
 }
 
 // RecordCacheMiss 显式记录一次缓存未命中（带 service 标签）。
 func RecordCacheMiss() {
+	ensureInit()
 	redisCacheMisses.WithLabelValues(serviceName).Inc()
 }
 
 func RecordHotKey(key string) {
+	ensureInit()
 	redisHotKeys.WithLabelValues(key).Inc()
 }
 
 func RecordPanic(service string) {
+	ensureInit()
 	panicCounter.WithLabelValues(service).Inc()
 }
 
 func RecordRPCRequest(service, method, status string, duration time.Duration) {
+	ensureInit()
 	rpcRequestsTotal.WithLabelValues(service, method, status).Inc()
 	rpcRequestDuration.WithLabelValues(service, method).Observe(duration.Seconds())
 }
 
 func RecordCacheOperation(operation, status string) {
+	ensureInit()
 	cacheOperations.WithLabelValues(operation, status).Inc()
 }
 
 func RecordDBOperation(operation, status string) {
+	ensureInit()
 	dbOperations.WithLabelValues(operation, status).Inc()
 }
 
 func SetServiceHealth(service string, healthy bool) {
+	ensureInit()
 	if healthy {
 		serviceHealth.WithLabelValues(service).Set(1.0)
 	} else {
@@ -303,25 +336,36 @@ func SetServiceHealth(service string, healthy bool) {
 
 // RecordGatewayRequest 记录网关处理的请求数（按 method/endpoint/status）。
 func RecordGatewayRequest(method, endpoint string, status int) {
+	ensureInit()
 	gatewayRequestsTotal.WithLabelValues(method, endpoint, strconv.Itoa(status)).Inc()
 }
 
 // RecordGatewayError 记录网关错误数（按错误类型）。
 func RecordGatewayError(errType string) {
+	ensureInit()
 	gatewayErrorsTotal.WithLabelValues(errType).Inc()
 }
 
 // GatewayConnInc/Dec 维护网关活跃上游连接数（Gauge）。
-func GatewayConnInc() { gatewayActiveConnections.Inc() }
-func GatewayConnDec() { gatewayActiveConnections.Dec() }
+func GatewayConnInc() {
+	ensureInit()
+	gatewayActiveConnections.Inc()
+}
+
+func GatewayConnDec() {
+	ensureInit()
+	gatewayActiveConnections.Dec()
+}
 
 // RecordGatewayUpstreamLatency 记录网关到后端的转发延迟。
 func RecordGatewayUpstreamLatency(service, endpoint string, duration time.Duration) {
+	ensureInit()
 	gatewayUpstreamDuration.WithLabelValues(service, endpoint).Observe(duration.Seconds())
 }
 
 // RecordReportGenerated 记录报表生成次数（供 report-service 调用）。
 func RecordReportGenerated(reportType string) {
+	ensureInit()
 	reportGeneratedTotal.WithLabelValues(reportType).Inc()
 }
 
