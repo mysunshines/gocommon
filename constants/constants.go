@@ -179,6 +179,11 @@ const (
 	// ServiceNameReport 报表服务名
 	ServiceNameReport = "report-service"
 
+	// ServiceNameNotification 站内消息服务名
+	// 网关按 proto package 约定（notification.v1.NotificationService）自动派生路由，
+	// 因此服务名必须与 proto package 首个字段一致（去掉 -service 后缀为 notification）。
+	ServiceNameNotification = "notification-service"
+
 	// RedisKeyPrefixUser 用户服务 Redis Key 前缀
 	RedisKeyPrefixUser = "user-service:"
 
@@ -188,6 +193,9 @@ const (
 	// RedisKeyPrefixComment 评论服务 Redis Key 前缀
 	RedisKeyPrefixComment = "comment:"
 
+	// RedisKeyPrefixNotification 站内消息服务 Redis Key 前缀
+	RedisKeyPrefixNotification = "notification:"
+
 	// MetricPrefixUser 用户服务 Prometheus 指标前缀
 	MetricPrefixUser = "user_service"
 
@@ -196,6 +204,18 @@ const (
 
 	// MetricPrefixComment 评论服务 Prometheus 指标前缀
 	MetricPrefixComment = "comment_service"
+
+	// MetricPrefixNotification 站内消息服务 Prometheus 指标前缀
+	MetricPrefixNotification = "notification_service"
+)
+
+// ============================================================================
+// 站内消息服务专用常量
+// ============================================================================
+const (
+	// DefaultCacheTTLNotification 未读计数缓存 TTL（秒）：10 分钟。
+	// 计数以 DB 为权威源，Redis 仅作加速，过期后自动回源重建。
+	DefaultCacheTTLNotification = 10 * 60
 )
 
 // ============================================================================
