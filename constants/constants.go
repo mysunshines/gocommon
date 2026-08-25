@@ -184,6 +184,11 @@ const (
 	// 因此服务名必须与 proto package 首个字段一致（去掉 -service 后缀为 notification）。
 	ServiceNameNotification = "notification-service"
 
+	// WSPathNotification 站内消息 WebSocket 路径（跨仓库契约）：
+	// gateway 同源 /ws/notification 反向代理到 notification-service 的 HTTP 端口，
+	// 前端连 ws(s)://host/ws/notification?token=xxx，鉴权在下游 WS 处理器内完成。
+	WSPathNotification = "/ws/notification"
+
 	// RedisKeyPrefixUser 用户服务 Redis Key 前缀
 	RedisKeyPrefixUser = "user-service:"
 
