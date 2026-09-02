@@ -17,6 +17,7 @@ common/
 ├── tcp/            # TCP 客户端
 ├── udp/            # UDP 客户端
 ├── kafka/          # Kafka 生产者/消费者
+├── cron/           # 定时任务（基于 robfig/cron，支持数据库加载任务）
 ├── metrics/        # Prometheus 指标采集
 ├── middleware/     # Gin 中间件（限流/指标/日志/恢复/CORS/JWT/上下文/超时）
 └── response/       # 统一 HTTP 响应（业务错误码 + 分页）
@@ -294,38 +295,6 @@ func RotateLog(serviceName string) error {
 - 旧文件的文件描述符在 logger 替换 writer 后被 Go GC 回收时关闭（或由 OS 在进程退出时关闭）
 - 这种简化方案适合 Docker 容器场景（日志由 Docker logging driver 采集，不需要复杂的 logrotate）
 - 没有使用 lumberjack 等第三方轮转库，保持依赖最小化
-
----
-
-## 日志
-
-```go
-import "common/log"
-
-// 初始化日志（JSON 格式，按天轮转，支持多日志文件）
-log.Init("logs", "info", "user-service")
-
-// 基本输出
-log.Debug("这是一条 debug 日志")
-log.Infof("用户 %d 登录成功", userID)
-log.Warn("磁盘使用率 %.2f%%", 85.5)
-log.Error("数据库连接失败: %v", err)
-
-// 结构化日志（带字段）
-log.WithField("user_id", 1001).Info("用户资料更新")
-log.WithFields(map[string]interface{}{
-    "host":   "10.0.0.1",
-    "port":   3306,
-    "action": "ping",
-}).Error("数据库连接超时")
-
-// 模块子 logger
-authLog := log.WithField("module", "auth")
-authLog.Info("令牌生成成功")
-
-// 自动初始化：直接调用日志方法而无需先 Init（使用默认配置）
-log.Info("hello")  // 自动初始化到 "logs" 目录 + "info" 级别
-```
 
 ---
 
@@ -2313,6 +2282,206 @@ type PageResult struct {
 - `data` — 当前页数据
 
 也可以直接扩展为 cursor-based 分页（`next_cursor` / `has_more`），需要时在 `PageResult` 中添加字段即可。
+
+---
+
+## 定时任务 [调用示例](cron/example_cron.go)
+
+### 基本用法
+
+```go
+import "common/cron"
+
+// 1. 实现 JobExecutor 接口（业务层实现具体任务执行逻辑）
+type MyJobExecutor struct{}
+
+func (e *MyJobExecutor) Execute(ctx context.Context, jobID int64, name, command string) error {
+    // 根据 command 执行具体的任务逻辑
+    switch command {
+    case "sync_data":
+        return syncDataService(ctx)
+    case "cleanup":
+        return cleanupExpiredData(ctx)
+    default:
+        return fmt.Errorf("unknown command: %s", command)
+    }
+}
+
+// 2. 实现 JobStore 接口（业务层实现数据库操作）
+type MyJobStore struct {
+    db *gorm.DB
+}
+
+func (s *MyJobStore) LoadEnabledJobs() ([]cron.JobRecord, error) {
+    var jobs []JobRecord
+    // 从数据库加载所有已启用的任务
+    err := s.db.Where("enabled = ?", true).Find(&jobs).Error
+    return jobs, err
+}
+
+func (s *MyJobStore) UpdateLastRun(jobID int64, lastRun time.Time) error {
+    // 更新任务最后执行时间
+    return s.db.Model(&JobRecord{}).Where("id = ?", jobID).
+        Update("last_run", lastRun).Error
+}
+
+// 3. 创建定时任务服务（自动加载已启用的任务并启动）
+svc := cron.NewCronService(&MyJobExecutor{}, &MyJobStore{db})
+defer svc.Stop()
+
+// 4. 动态添加任务
+err := svc.AddJob(1, "0 */5 * * * *", "sync_data", "数据同步任务")
+// 表达式说明：秒 分 时 日 月 周
+// "0 */5 * * * *" = 每 5 分钟执行一次
+
+// 5. 动态移除任务
+svc.RemoveJob(1)
+
+// 6. 校验 Cron 表达式
+err := cron.ValidateCronExpr("0 */5 * * * *")  // nil = 合法
+err = cron.ValidateCronExpr("invalid")           // error = 不合法
+
+// 7. 获取任务状态
+entryID, ok := svc.GetEntryID(1)
+if ok {
+    entry := svc.GetEntry(entryID)
+    fmt.Printf("下次执行时间: %v\n", entry.Next)
+    fmt.Printf("上次执行时间: %v\n", entry.Prev)
+}
+```
+
+### 底层原理
+
+#### robfig/cron 核心架构
+
+```
+CronService
+  ├── engine *cron.Cron        ← cron 引擎（管理所有定时任务）
+  ├── executor JobExecutor      ← 任务执行器（业务实现）
+  ├── store JobStore           ← 任务存储（数据库操作）
+  └── jobMap map[int64]cron.EntryID  ← 任务 ID → Entry ID 映射
+          │
+          ▼
+  cron.Cron 内部：
+  ┌────────────────────────────────────┐
+  │  时间调度器                         │
+  │                                    │
+  │  entries []Entry                   │
+  │    ├─ ID: cron.EntryID            │
+  │    ├─ Next: time.Time (下次执行)   │
+  │    └─ Job: cron.Job (执行函数)     │
+  │                                    │
+  │  schedule.Next(time.Now())          │
+  │    └─ 根据 cron 表达式计算下次时间 │
+  │                                    │
+  │  运行循环：                         │
+  │    for {                            │
+  │      now := time.Now()              │
+  │      for _, e := range entries {    │
+  │        if e.Next.Before(now) {     │
+  │          go e.Job.Run()  ← 启动 goroutine 执行
+  │          e.Next = schedule.Next(now)
+  │        }                            │
+  │      }                              │
+  │      sleep(until next entry)        │
+  │    }                                │
+  └────────────────────────────────────┘
+```
+
+**Cron 表达式格式**（本库使用秒级可选格式）：
+
+```
+字段: 秒  分   时  日  月  周
+格式: *   *    *   *   *   *
+示例: 0   */5  *   *   *   *  ← 每 5 分钟执行
+示例: 30  0   9   *   *   *  ← 每天 9:00:30 执行
+示例: 0   0   0   *   *   0  ← 每周日 0:00:00 执行
+```
+
+#### 数据库驱动的任务管理
+
+```
+启动时：
+  NewCronService()
+    └─ loadEnabledJobs()
+         └─ store.LoadEnabledJobs()  ← 从数据库加载所有 enabled=true 的任务
+              └─ 逐个调用 addToEngine() 添加到 cron 引擎
+
+运行时：
+  AddJob(id, expr, command, name)
+    └─ engine.AddFunc(expr, jobFunc)  ← 添加到 cron 引擎
+         └─ jobMap[id] = entryID       ← 记录映射关系
+
+  RemoveJob(id)
+    └─ engine.Remove(entryID)           ← 从 cron 引擎移除
+         └─ delete(jobMap, id)          ← 清除映射
+
+执行时：
+  executeJob(id, name, command)
+    └─ store.UpdateLastRun(id, time.Now())  ← 更新最后执行时间
+         └─ executor.Execute(ctx, id, name, command)  ← 执行业务逻辑
+```
+
+**设计优势**：
+- 任务配置持久化到数据库，服务重启后自动恢复
+- 支持动态添加/删除任务，无需重启服务
+- 通过 `JobExecutor` 和 `JobStore` 接口解耦，业务层自定义实现
+
+#### 并发安全设计
+
+```go
+type CronService struct {
+    jobMap   map[int64]cron.EntryID
+    mu       sync.RWMutex    // 保护 jobMap 并发安全
+}
+```
+
+- **读操作**（`GetEntryID`）：使用 `RLock`，多个 goroutine 可并发读取
+- **写操作**（`AddJob`、`RemoveJob`）：使用 `Lock`，保证映射表更新的原子性
+- **cron 引擎内部**：`engine.AddFunc` 和 `engine.Remove` 是线程安全的（robfig/cron 内部使用锁保护）
+
+#### 任务执行流程
+
+```
+cron 引擎触发：
+  ┌─ 到达调度时间
+  │
+  ▼
+jobFunc()  ────────────────────────────────────────────────┐
+  │                                                        │
+  ▼                                                        ▼
+executeJob(id, name, command)                             业务层 Execute()
+  │                                                         │
+  ├─ store.UpdateLastRun(id, now)  ← 更新最后执行时间       │
+  │                                                         ├─ 根据 command 执行具体逻辑
+  │                                                         ├─ 处理业务逻辑
+  ▼                                                         └─ 返回 error
+executor.Execute(ctx, id, name, command)                    │
+  │                                                         ▼
+  └─ 调用业务实现                                           记录日志 / 发送告警（如果失败）
+```
+
+**错误处理**：
+- `Execute()` 返回 error 时，本库仅记录日志（不中断 cron 引擎）
+- 如果任务需要重试，由业务层在 `Execute` 实现中处理
+
+#### Cron 表达式校验原理
+
+```go
+func ValidateCronExpr(expr string) error {
+    parser := cron.NewParser(
+        cron.SecondOptional | cron.Minute | cron.Hour |
+            cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+    )
+    _, err := parser.Parse(expr)
+    return err
+}
+```
+
+- 使用 `cron.Parser` 解析表达式
+- 支持可选秒字段（`SecondOptional`）：`0 */5 * * * *` 或 `*/5 * * * *` 都合法
+- 支持描述符（`Descriptor`）：`@every 1h`、`@hourly`、`@daily`、`@weekly` 等
+- 解析失败返回 error，解析成功返回 `cron.Schedule` 对象（用于计算下次执行时间）
 
 ---
 

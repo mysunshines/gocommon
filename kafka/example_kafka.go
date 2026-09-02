@@ -67,8 +67,8 @@ func Example_main() {
 	fmt.Println("\n=== 示例4：发送JSON消息 ===")
 
 	data := map[string]interface{}{
-		"username": "testuser",
-		"action":   "login",
+		"username":  "testuser",
+		"action":    "login",
 		"timestamp": time.Now().Unix(),
 	}
 

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -168,11 +169,12 @@ func ApplyDefaults(c *Config) {
 	if c.GRPC.Port == 0 {
 		c.GRPC.Port = 9000
 	}
+	// 多实例安全：4 个服务 × 25 = 100 连接，远低于 MySQL 默认 151
 	if c.Database.MaxOpenConns == 0 {
-		c.Database.MaxOpenConns = 100
+		c.Database.MaxOpenConns = 25
 	}
 	if c.Database.MaxIdleConns == 0 {
-		c.Database.MaxIdleConns = 10
+		c.Database.MaxIdleConns = 5
 	}
 	if c.Database.ConnMaxLifetime == 0 {
 		c.Database.ConnMaxLifetime = 3600
@@ -203,5 +205,57 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.RateLimit.Burst == 0 {
 		c.RateLimit.Burst = 2000
+	}
+}
+
+// ApplyEnvOverrides 用环境变量覆盖配置值，使同一份 config.yaml 可在本地和 Docker 环境通用。
+// Docker Compose 中通过 environment 设置以下变量：
+//
+//	DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
+//	REDIS_HOST / REDIS_PORT
+//	CONSUL_ADDRESS / MICRO_REGISTRY_ADDRESS
+func ApplyEnvOverrides(c *Config) {
+	// Database
+	if v := os.Getenv("DB_HOST"); v != "" {
+		c.Database.Host = v
+	}
+	if v := os.Getenv("DB_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			c.Database.Port = port
+		}
+	}
+	if v := os.Getenv("DB_USER"); v != "" {
+		c.Database.User = v
+	}
+	if v := os.Getenv("DB_PASSWORD"); v != "" {
+		c.Database.Password = v
+	}
+	if v := os.Getenv("DB_NAME"); v != "" {
+		c.Database.Name = v
+	}
+
+	// Redis
+	if v := os.Getenv("REDIS_HOST"); v != "" {
+		c.Redis.Host = v
+	}
+	if v := os.Getenv("REDIS_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			c.Redis.Port = port
+		}
+	}
+
+	// Consul — 优先 CONSUL_ADDRESS，其次 MICRO_REGISTRY_ADDRESS
+	if v := os.Getenv("CONSUL_ADDRESS"); v != "" {
+		c.Consul.Address = v
+	} else if v := os.Getenv("MICRO_REGISTRY_ADDRESS"); v != "" {
+		// Docker Compose 中通常用 MICRO_REGISTRY_ADDRESS
+		c.Consul.Address = v
+	}
+
+	// gRPC Port — 支持 MICRO_SERVER_ADDRESS 格式 :port
+	if v := os.Getenv("GRPC_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			c.GRPC.Port = port
+		}
 	}
 }

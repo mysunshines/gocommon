@@ -273,10 +273,10 @@ func ExampleConvenienceFuncs() {
 // ============================================================================
 
 type Article struct {
-	ID      int    `json:"id"`
-	Title   string `json:"title"`
-	UserID  int    `json:"user_id"`
-	CommentCount int `json:"comment_count"`
+	ID           int    `json:"id"`
+	Title        string `json:"title"`
+	UserID       int    `json:"user_id"`
+	CommentCount int    `json:"comment_count"`
 	AuthorName   string `json:"author_name"`
 }
 

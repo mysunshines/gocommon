@@ -7,9 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -219,6 +224,135 @@ func MinInt(a, b int) int {
 func InRange(value, min, max int) bool {
 	return value >= min && value <= max
 }
+
+// ============================================================================
+// 文件路径 & 安全工具
+// ============================================================================
+
+// SafeResolve 解析路径并确保在 baseDir 内，防止目录遍历攻击
+func SafeResolve(baseDir, subPath string) (string, error) {
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", err
+	}
+	absPath, err := filepath.Abs(filepath.Join(baseDir, subPath))
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(absPath, absBase) {
+		return "", os.ErrPermission
+	}
+	return absPath, nil
+}
+
+// SafeResolveOrAbort 安全解析路径，失败时直接返回 403 并终止请求
+func SafeResolveOrAbort(c *gin.Context, baseDir, subPath string) (string, bool) {
+	abs, err := SafeResolve(baseDir, subPath)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "禁止访问"})
+		return "", false
+	}
+	return abs, true
+}
+
+// SanitizeFilename 清理文件名中的非法字符
+func SanitizeFilename(name string) string {
+	replacer := strings.NewReplacer(
+		"/", "-", "\\", "-", ":", "-", "*", "-",
+		"?", "-", "\"", "-", "<", "-", ">", "-", "|", "-",
+	)
+	name = replacer.Replace(name)
+	// 去除不可见字符
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) || r == ' ' {
+			return r
+		}
+		return -1
+	}, name)
+	if len(name) > 100 {
+		name = name[:100]
+	}
+	return strings.TrimSpace(name)
+}
+
+// CopyFile 跨设备安全复制文件（通用文件操作）
+func CopyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}
+
+// ============================================================================
+// 通用文件 & JSON 操作
+// ============================================================================
+
+// LoadJSONFilesFromDir 从目录中读取所有JSON文件并解析到切片（泛型版本，需要Go 1.18+）
+// 使用示例：holidays, err := util.LoadJSONFilesFromDir[models.Holiday]("storage/holidays")
+func LoadJSONFilesFromDir[T any](dir string) ([]T, error) {
+	var result []T
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, f.Name()))
+		if err != nil {
+			continue
+		}
+		var items []T
+		if err := json.Unmarshal(data, &items); err != nil {
+			continue
+		}
+		result = append(result, items...)
+	}
+	return result, nil
+}
+
+// ============================================================================
+// 时间解析 & 格式化增强
+// ============================================================================
+
+// FlexParse 支持多种格式的灵活时间解析，解析失败时返回兜底默认值
+func FlexParse(s string) time.Time {
+	formats := []string{
+		constants.DateTimeFormat,
+		constants.DateTimeISO8601,
+		constants.DateTimeWithTZ,
+		constants.DateFormat,
+		"2006-01-02T15:04:05+08:00",
+		"2006-01-02T15:04:05-07:00",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t
+		}
+	}
+	// 兜底：返回零值时间，调用方自行判断
+	return time.Time{}
+}
+
+// NowFmt 返回当前时间的 YYYY-MM-DD HH:MM:SS 格式字符串
+func NowFmt() string {
+	return FormatTime(time.Now())
+}
+
+// ============================================================================
+// Gin 上下文工具（预留）
+// ============================================================================
 
 type ginCtx struct{}
 

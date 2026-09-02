@@ -25,6 +25,9 @@ const (
 
 	// DateTimeWithTZ 带时区缩写的时间格式: 2006-01-02 15:04:05 MST
 	DateTimeWithTZ = "2006-01-02 15:04:05 MST"
+
+	// DateTimeMonthDay 月日时分格式（无年份）: 01-02 15:04
+	DateTimeMonthDay = "01-02 15:04"
 )
 
 // ============================================================================
@@ -34,8 +37,8 @@ const (
 	// FilePermDir 目录创建权限: rwxr-xr-x (owner读写执行, 组/其他读执行)
 	FilePermDir = 0755
 
-	// FilePermFile 文件创建权限: rw-rw-rw- (所有人可读写)
-	FilePermFile = 0666
+	// FilePermFile 文件创建权限: rw-r--r-- (owner 读写, 组/其他只读)
+	FilePermFile = 0644
 )
 
 // ============================================================================
@@ -169,10 +172,10 @@ const (
 // ============================================================================
 // 统一错误码区间分配
 //
-//   10000-19999  通用/网关错误
-//   20000-29999  用户服务 (User Service)
-//   30000-39999  文章服务 (Article Service)
-//   40000-49999  评论服务 (Comment Service)
+//	10000-19999  通用/网关错误
+//	20000-29999  用户服务 (User Service)
+//	30000-39999  文章服务 (Article Service)
+//	40000-49999  评论服务 (Comment Service)
 //
 // 各服务 proto 中也使用相同区间，保持两套常量对齐。
 // ============================================================================
@@ -210,12 +213,12 @@ const (
 // 各服务向网关暴露的业务错误码（与各服务 proto/errors 保持一致）
 const (
 	// ---- 用户服务 (20000-29999) ----
-	ErrCodeUserExists          = 20001
-	ErrCodeTokenInvalid        = 20002
-	ErrCodePasswordIncorrect   = 20003
-	ErrCodeUserInBlacklist     = 20004
-	ErrCodeUserNotFound        = 20005
-	ErrCodeTokenExpired        = 20006
+	ErrCodeUserExists        = 20001
+	ErrCodeTokenInvalid      = 20002
+	ErrCodePasswordIncorrect = 20003
+	ErrCodeUserInBlacklist   = 20004
+	ErrCodeUserNotFound      = 20005
+	ErrCodeTokenExpired      = 20006
 
 	// ---- 文章服务 (30000-39999) ----
 	ErrCodeArticleNotFound = 30001
