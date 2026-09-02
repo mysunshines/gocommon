@@ -2,6 +2,7 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 var (
 	logger      *logrus.Logger
+	asyncWriter *AsyncWriter  // 异步写入器，包裹 stdout/文件，避免日志 I/O 阻塞请求路径
 	once        sync.Once
 	currentDate string        // 当前日志文件对应的日期
 	logDirPath  string        // 日志目录
@@ -46,7 +48,10 @@ func Init(logDir, logLevel, svcName string) {
 			logFile := filepath.Join(logDir, fmt.Sprintf(constants.LogFileNameFmt, svcName, today))
 			file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, constants.FilePermFile)
 			if err == nil {
-				logger.SetOutput(file)
+				// 同时输出到 stdout 和文件，确保 Docker logs 和文件都有记录。
+				// 再用 AsyncWriter 包裹，使日志 I/O 异步化，避免磁盘/管道写入慢阻塞请求 goroutine。
+				asyncWriter = NewAsyncWriter(io.MultiWriter(os.Stdout, file), constants.AsyncLogBufferSize)
+				logger.SetOutput(asyncWriter)
 			}
 		}
 
@@ -81,6 +86,16 @@ func Debug(args ...interface{}) {
 	GetLogger().Debug(args...)
 }
 
+// IsDebug 返回当前日志级别是否开启 debug，调用方可用其前置判断是否执行
+// 高开销的日志拼装（如 protojson 序列化 body），避免非 debug 场景下浪费 CPU。
+func IsDebug() bool {
+	// 尚未初始化时按默认级别（info）处理，视为未开启 debug。
+	if logger == nil {
+		return constants.DefaultLogLevel == "debug"
+	}
+	return logger.GetLevel() <= logrus.DebugLevel
+}
+
 func Debugf(format string, args ...interface{}) {
 	GetLogger().Debugf(format, args...)
 }
@@ -102,10 +117,12 @@ func Errorf(format string, args ...interface{}) {
 }
 
 func Fatal(args ...interface{}) {
+	FlushLog() // 退出前先把残留日志落盘，避免崩溃日志丢失
 	GetLogger().Fatal(args...)
 }
 
 func Fatalf(format string, args ...interface{}) {
+	FlushLog() // 退出前先把残留日志落盘，避免崩溃日志丢失
 	GetLogger().Fatalf(format, args...)
 }
 
@@ -148,7 +165,8 @@ func doRotate(today string) error {
 	if err != nil {
 		return err
 	}
-	logger.SetOutput(file)
+	// 热替换异步 writer 的底层目标，保留异步管道，不回退到同步写入。
+	asyncWriter.SetDst(io.MultiWriter(os.Stdout, file))
 	currentDate = today
 	return nil
 }
@@ -165,9 +183,35 @@ func RotateLog(svcName string) error {
 	return doRotate(today)
 }
 
-// StopRotation 停止后台日志轮转（优雅关闭时调用）
+// SetLevel 动态调整运行期日志级别，供配置中心热更等场景即时生效，无需重启。
+// level 为 logrus 支持的字符串：debug / info / warn / error / fatal / panic。
+// 非法级别会被忽略（保持当前级别）并返回错误。
+func SetLevel(level string) error {
+	if logger == nil {
+		// 尚未初始化时，先以默认参数初始化再设置，避免 nil panic。
+		Init(constants.DefaultLogDir, constants.DefaultLogLevel, constants.ServiceNameGateway)
+	}
+	lv, err := logrus.ParseLevel(level)
+	if err != nil {
+		return fmt.Errorf("log: invalid level %q: %w", level, err)
+	}
+	logger.SetLevel(lv)
+	return nil
+}
+
+// StopRotation 停止后台日志轮转并优雅 drain 异步日志（优雅关闭时调用）。
 func StopRotation() {
 	if stopCh != nil {
 		close(stopCh)
+	}
+	FlushLog()
+}
+
+// FlushLog 优雅关闭异步写入器：阻塞直到残留日志全部写完。
+// 进程退出前应调用一次（StopRotation 已自动调用），确保关键日志不丢。
+// 多次调用安全（内部用 once 保护）。
+func FlushLog() {
+	if asyncWriter != nil {
+		_ = asyncWriter.Close()
 	}
 }

@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
 
+	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 )
 
@@ -24,11 +27,11 @@ import (
 
 // FastClient 基于 fasthttp 的 HTTP 客户端
 type FastClient struct {
-	client     *fasthttp.Client
-	baseURL    string
-	timeout    time.Duration
-	headers    map[string]string
-	middleware []FastMiddleware
+	client     *fasthttp.Client  // 底层 fasthttp 客户端
+	baseURL    string            // 基础 URL，拼接到各请求路径前
+	timeout    time.Duration     // 请求超时
+	headers    map[string]string // 默认请求头（单次请求可覆盖）
+	middleware []FastMiddleware  // 请求发出前执行的中间件链
 }
 
 // FastMiddleware fasthttp 中间件
@@ -305,13 +308,29 @@ func (c *FastClient) do(ctx context.Context, req *fasthttp.Request, resp *fastht
 	}
 
 	// 发送请求（fasthttp 不内置 context 支持，用 DoDeadline 模拟）
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	start := time.Now()
 	err := c.client.DoDeadline(req, resp, deadline)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  string(req.Header.Method()),
+			"url":                     string(req.URI().FullURI()),
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}).Errorf("[httpclient:fast] request failed")
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
 	// 检查 context 是否已取消
 	if ctx.Err() != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  string(req.Header.Method()),
+			"url":                     string(req.URI().FullURI()),
+			"duration":                time.Since(start).String(),
+			"err":                     ctx.Err().Error(),
+		}).Errorf("[httpclient:fast] request canceled")
 		return nil, ctx.Err()
 	}
 
@@ -327,6 +346,17 @@ func (c *FastClient) do(ctx context.Context, req *fasthttp.Request, resp *fastht
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
+	fastFields := logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"method":                  string(req.Header.Method()),
+		"url":                     string(req.URI().FullURI()),
+		"status":                  resp.StatusCode(),
+		"duration":                time.Since(start).String(),
+	}
+	if log.IsDebug() {
+		fastFields["ctx_kv"] = middleware.DumpContext(ctx)
+	}
+	log.WithFields(fastFields).Debugf("[httpclient:fast] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,

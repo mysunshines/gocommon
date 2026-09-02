@@ -3,12 +3,15 @@ package database
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/mysunshines/gocommon/config"
+	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/log"
 	"github.com/mysunshines/gocommon/metrics"
+	"github.com/mysunshines/gocommon/middleware"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -20,28 +23,31 @@ var (
 	once sync.Once
 )
 
+// Config 数据库配置
 type Config struct {
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	DBName       string
-	MaxOpenConns int
-	MaxIdleConns int
-	MaxLifeTime  int
+	Host         string // 数据库主机
+	Port         int    // 数据库端口
+	User         string // 用户名
+	Password     string // 密码
+	DBName       string // 数据库名
+	MaxOpenConns int    // 最大打开连接数
+	MaxIdleConns int    // 最大空闲连接数
+	MaxLifeTime  int    // 连接最大存活时间（秒）
 }
 
 func Init(cfg *config.DatabaseConfig, env string) error {
 	var initErr error
 	once.Do(func() {
-		gormLogger := logger.Default
-		if env == "development" {
-			gormLogger = logger.Default.LogMode(logger.Info)
+		gormLogger := logger.Interface(&SlowQueryLogger{LogLevel: logger.Warn})
+		if env == constants.EnvDevelopment {
+			gormLogger = gormLogger.LogMode(logger.Info)
 		}
 
 		var err error
 		db, err = gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
 			Logger: gormLogger,
+			// 不使用数据库外键约束，关联关系在代码层（service/repository）约束。
+			DisableForeignKeyConstraintWhenMigrating: true,
 			NowFunc: func() time.Time {
 				return time.Now().Local()
 			},
@@ -83,36 +89,70 @@ func GetDBConn() *gorm.DB {
 	return db
 }
 
-type SlowQueryLogger struct{}
+type SlowQueryLogger struct {
+	LogLevel logger.LogLevel // 日志级别过滤
+}
 
 func (s *SlowQueryLogger) LogMode(level logger.LogLevel) logger.Interface {
-	return s
+	newLogger := *s
+	newLogger.LogLevel = level
+	return &newLogger
 }
 
-func (s *SlowQueryLogger) Error(_ context.Context, _ string, values ...interface{}) {
+func (s *SlowQueryLogger) Error(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 {
-		log.Errorf("DB Error: %v", values)
+		traceID := middleware.GetTraceIDFromContext(ctx)
+		log.Errorf("[MySQL] traceID=%v | err=%v", traceID, values)
 	}
 }
 
-func (s *SlowQueryLogger) Info(_ context.Context, _ string, values ...interface{}) {
-	if len(values) > 0 {
-		log.Infof("DB Info: %v", values)
+func (s *SlowQueryLogger) Info(ctx context.Context, _ string, values ...interface{}) {
+	if len(values) > 0 && s.LogLevel >= logger.Info {
+		traceID := middleware.GetTraceIDFromContext(ctx)
+		log.Infof("[MySQL] traceID=%v | %v", traceID, values)
 	}
 }
 
-func (s *SlowQueryLogger) Warn(_ context.Context, _ string, values ...interface{}) {
-	if len(values) > 0 {
-		log.Warnf("DB Warn: %v", values)
+func (s *SlowQueryLogger) Warn(ctx context.Context, _ string, values ...interface{}) {
+	if len(values) > 0 && s.LogLevel >= logger.Warn {
+		traceID := middleware.GetTraceIDFromContext(ctx)
+		log.Warnf("[MySQL] traceID=%v | %v", traceID, values)
 	}
 }
 
 func (s *SlowQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	elapsed := time.Since(begin)
 	sql, rows := fc()
+	traceID := middleware.GetTraceIDFromContext(ctx)
+
+	// 每次 SQL 都计入 DB 操作总量（按 SQL 前缀粗分），驱动 db_operations_total 指标。
+	// 必须在最开头（含 early return 之前）统计，确保全部 SQL 都被计数。
+	op := classifySQL(sql)
+	status := "success"
+	if err != nil && err != gorm.ErrRecordNotFound {
+		status = "error"
+	}
+	metrics.RecordDBOperation(op, status)
+
+	// 出错时始终记录（不受 LogLevel 过滤），便于通过 traceID 排查
+	if err != nil {
+		log.Errorf("[MySQL] traceID=%v | sql=%s | duration=%v | err=%v",
+			traceID, sql, elapsed, err)
+		return
+	}
+
+	// Info 级别：记录所有 SQL 查询（开发环境）
+	if s.LogLevel >= logger.Info {
+		log.Infof("[MySQL] traceID=%v | sql=%s | duration=%v | rows=%d",
+			traceID, sql, elapsed, rows)
+		return
+	}
+
+	// Warn 级别：只记录 >100ms 的慢查询（生产环境默认）
 	if elapsed > 100*time.Millisecond {
 		metrics.RecordSlowQuery(sql, elapsed)
-		log.Warnf("Slow query: %s, duration: %v, rows: %d", sql, elapsed, rows)
+		log.Warnf("[MySQL] traceID=%v | sql=%s | duration=%v | rows=%d | slow_query=true",
+			traceID, sql, elapsed, rows)
 	}
 }
 
@@ -140,10 +180,39 @@ func Close() error {
 	return nil
 }
 
+// Ping 探测数据库连接可用性，供 metrics.StartHealthReporter 等健康上报使用。
+func Ping(ctx context.Context) error {
+	if db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+}
+
 type TxFunc func(*gorm.DB) error
 
 func Transaction(fn TxFunc) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		return fn(tx)
 	})
+}
+
+// classifySQL 按 SQL 前缀粗分操作类型，用于 db_operations_total 的 operation label。
+func classifySQL(sql string) string {
+	s := strings.TrimSpace(strings.ToUpper(sql))
+	switch {
+	case strings.HasPrefix(s, "SELECT"):
+		return "query"
+	case strings.HasPrefix(s, "INSERT"):
+		return "insert"
+	case strings.HasPrefix(s, "UPDATE"):
+		return "update"
+	case strings.HasPrefix(s, "DELETE"):
+		return "delete"
+	default:
+		return "other"
+	}
 }

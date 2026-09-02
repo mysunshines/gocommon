@@ -12,16 +12,24 @@ import (
 // ============================================================================
 
 // ExampleInitCustom 演示自定义日志初始化（输出到文件）
-func ExampleInitCustom() {
+func ExampleInit() {
 	Init("./logs", "debug", "user-service")
 	fmt.Println("logger initialized")
 }
 
 // ExampleInitDefault 演示默认初始化（GetLogger 自动触发，输出到 stdout）
-func ExampleInitDefault() {
+func ExampleGetLogger() {
 	// 不显式调用 Init，GetLogger 自动使用默认配置
 	log := GetLogger()
 	log.Info("auto-initialized with defaults")
+}
+
+// ExampleSetLevel 演示动态调整运行期日志级别（供配置中心热更等场景）。
+func ExampleSetLevel() {
+	// 线上排查时将级别临时调为 debug，事后调回 info，无需重启。
+	_ = SetLevel("debug")
+	// ... 排查结束后 ...
+	_ = SetLevel("info")
 }
 
 // ============================================================================
@@ -29,7 +37,7 @@ func ExampleInitDefault() {
 // ============================================================================
 
 // ExampleLevels 演示各级别日志
-func ExampleLevels() {
+func ExampleInfo() {
 	Init("", "debug", "my-service") // 空 logDir 则输出到 stdout
 
 	Debug("this is a debug message")
@@ -90,7 +98,7 @@ func ExampleWithFields() {
 // ============================================================================
 
 // ExampleErrorContext 演示错误日志最佳实践
-func ExampleErrorContext() {
+func ExampleError() {
 	Init("", "info", "order-service")
 
 	err := errors.New("database connection refused")
@@ -127,7 +135,7 @@ func ExampleRotateLog() {
 // ============================================================================
 
 // ExampleSubLogger 演示子 logger（带固定字段的上下文 logger）
-func ExampleSubLogger() {
+func ExampleDebug() {
 	Init("", "debug", "sub-svc")
 
 	// 为不同模块创建带固定字段的子 logger

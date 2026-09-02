@@ -1,26 +1,39 @@
-# Common - 通用工具包
+# gocommon - 通用工具库
 
-通用工具库，提供跨微服务共享的基础设施组件。
+通用工具库（module: `github.com/mysunshines/gocommon`，当前版本 v1.5.9），提供跨微服务共享的基础设施组件。各业务服务通过 go.mod `replace` 指向本地目录或直接引用版本号。
 
 ## 目录结构
 
 ```
-common/
-├── config/         # 配置管理（YAML 加载 + 全局单例）
-├── log/            # 日志（基于 logrus 的 JSON 结构化日志）
-├── constants/      # 项目级常量（时间格式/错误码/JWT/校验规则等）
+gocommon/
+├── config/         # 配置管理（YAML 按环境加载 + 全局单例 + 热更字段）
+├── log/            # 日志（logrus JSON 结构化 + 按天轮转 + Loki 异步推送）
+├── constants/      # 跨服务契约常量（服务名/端口/JWT claims/错误码/Redis 前缀/WS 路径等）
 ├── util/           # 通用工具（加密/校验/时间/IP/切片操作）
-├── database/       # 数据库连接（GORM MySQL，含 Ping 验证 + 慢查询）
-├── cache/          # 缓存（Redis + 本地缓存 + 布隆过滤器 + singleflight）
+├── database/       # 数据库连接（GORM MySQL，Ping 验证 + 慢查询检测）
+├── cache/          # 缓存（Redis + 本地缓存 + 布隆过滤器 + singleflight + 热点分片）
 ├── pool/           # Goroutine 池（并行/串行/混合执行 + Future 模式）
+├── grpcclient/     # 服务间 gRPC 调用统一入口（注册表 + 连接复用 + 鉴权透传 + 韧性）
+├── consul/         # Consul 注册/注销（零 SDK，标准库 HTTP API + 金丝雀标记）
+├── configcenter/   # 配置中心（Consul KV 长轮询 Watch + 热更下发）
+├── resilience/     # 韧性策略（超时 + 熔断 + 限流 + 降级，按下游服务隔离）
+├── observability/  # OpenTelemetry 链路追踪（TraceID 与日志共用）
+├── retry/          # 带指数退避与抖动的可重试执行器
+├── scheduler/      # 轻量定时调度器（daily/weekly/interval 三种规格）
+├── notify/         # 邮件发送（net/smtp，HTML 正文 + 内联图片）
+├── prometheus/     # Prometheus HTTP 查询客户端（即时/区间查询）
+├── captcha/        # 图形验证码
+├── minio/          # 对象存储（MinIO / S3 兼容）
+├── upload/         # Web 框架无关的文件上传落盘
 ├── http/           # HTTP 客户端（net/http + fasthttp 双实现）
 ├── tcp/            # TCP 客户端
 ├── udp/            # UDP 客户端
 ├── kafka/          # Kafka 生产者/消费者
 ├── cron/           # 定时任务（基于 robfig/cron，支持数据库加载任务）
 ├── metrics/        # Prometheus 指标采集
-├── middleware/     # Gin 中间件（限流/指标/日志/恢复/CORS/JWT/上下文/超时）
-└── response/       # 统一 HTTP 响应（业务错误码 + 分页）
+├── middleware/     # 中间件（Gin HTTP + gRPC 拦截器：鉴权/限流/指标/日志/超时/CSRF）
+├── response/       # 统一 HTTP 响应（业务错误码 + 分页）
+└── grafana/        # Grafana 面板 JSON（监控配套）
 ```
 
 ---
@@ -30,37 +43,46 @@ common/
 ### 基本用法
 
 ```go
-import "common/config"
+import goconfig "github.com/mysunshines/gocommon/config"
 
-// 加载 YAML 配置文件（自动填充默认值并缓存为全局单例）
-conf, err := config.Load("config.yaml")
-if err != nil {
-    panic(err)
-}
+// 推荐：按环境加载（CONFIG_PATH 优先；否则 config/config_<APP_ENV>.yaml；兜底 config/config.yaml）
+conf, err := goconfig.LoadByEnv()
+
+// 显式指定路径加载
+conf, err := goconfig.Load("config/config_test.yaml")
 
 fmt.Println(conf.App.Name)
 fmt.Println(conf.Database.DSN())      // "root:pass@tcp(localhost:3306)/blog?..."
 fmt.Println(conf.Redis.Addr())        // "localhost:6379"
-fmt.Println(conf.GRPC.Addr())         // "0.0.0.0:9000"
+fmt.Println(conf.GRPC.Addr())         // "0.0.0.0:9101"
 
 // 任意位置获取全局配置（无需传递 cfg 参数）
-cfg := config.Get()
+cfg := goconfig.Get()
 fmt.Println(cfg.JWT.Secret)
 ```
+
+**环境切换约定**：Docker 部署时由 compose 注入 `APP_ENV` 与 `CONFIG_PATH`（如 `APP_ENV=test` + `CONFIG_PATH=config/config_test.yaml`），本地开发默认读 `config/config.yaml`。配置中的热更字段（日志级别/限流阈值/超时/韧性/缓存策略）可被 Consul 配置中心覆盖，见「配置中心」章节。
 
 ### Config 结构体全貌
 
 ```go
 type Config struct {
-    App       AppConfig            // 应用名/环境/日志级别/端口
-    Database  DatabaseConfig       // MySQL 连接信息 + DSN()
-    Redis     RedisConfig          // Redis 连接信息 + Addr()
-    JWT       JWTConfig            // JWT 密钥 + 过期时间
-    GRPC      GRPCConfig           // gRPC 监听地址 + Addr()
-    HTTP      HTTPConfig           // HTTP 监听地址 + Addr()
-    Consul    ConsulConfig         // 服务发现配置
-    Metrics   MetricsConfig        // Prometheus /metrics 端口
-    RateLimit RateLimitConfig      // 限流 QPS/Burst
+    App       AppConfig       // 应用名/环境/日志级别/端口
+    Database  DatabaseConfig  // MySQL 连接信息 + DSN()
+    Redis     RedisConfig     // Redis 连接信息 + Addr()
+    JWT       JWTConfig       // JWT 密钥 + 过期时间
+    GRPC      GRPCConfig      // gRPC 监听地址 + Addr()
+    HTTP      HTTPConfig      // HTTP 监听地址 + Addr()
+    Consul    ConsulConfig    // 服务发现配置
+    Micro     MicroConfig     // 注册中心配置（type/address）
+    Metrics   MetricsConfig   // Prometheus /metrics 端口
+    RateLimit RateLimitConfig // 限流 QPS/Burst + 路由级规则
+    Server    ServerConfig    // 入站 server 调优（gRPC/HTTP 超时与 keepalive，部分可热更）
+    CORS      CORSConfig      // CORS 跨域（可选，HTTP 直连服务用）
+    Mail      MailConfig      // SMTP 邮件（可选，发信服务用）
+    MinIO     MinIOConfig     // 对象存储（文件上传统一落 MinIO）
+    Loki      LokiConfig      // Loki 集中日志（未启用自动降级为本地日志）
+    OTel      OTelConfig      // OpenTelemetry 链路追踪（OTLP 上报地址）
 }
 ```
 
@@ -156,7 +178,7 @@ func (a *AppConfig) Addr() string {
 ### 基本用法
 
 ```go
-import "common/log"
+import "github.com/mysunshines/gocommon/log"
 
 // 显式初始化
 log.Init("logs", "info", "user-service")
@@ -296,12 +318,26 @@ func RotateLog(serviceName string) error {
 - 这种简化方案适合 Docker 容器场景（日志由 Docker logging driver 采集，不需要复杂的 logrotate）
 - 没有使用 lumberjack 等第三方轮转库，保持依赖最小化
 
+#### Loki 集中日志（可选启用）
+
+```go
+// 方式一：直接启用（main.go 中，Init 之后调用）
+log.EnableLoki("http://loki:3100/loki/api/v1/push", "article-service", "")
+
+// 方式二：从配置启用（推荐，未配置时自动降级为仅本地文件）
+log.EnableLokiFromConfig(cfg.Loki, cfg.App.Name)
+```
+
+- 日志经后台 goroutine **异步批量推送**到 Loki（不阻塞业务写日志的路径），推送失败静默重试
+- 推送到 Loki 的日志带 `service` 标签与每条的 `trace_id` 字段，可按 trace 聚合检索
+- 配合 gateway 的 `GET /admin/trace?trace_id=xxx` 实现"一次查询看全链路"
+
 ---
 
 ## 常量
 
 ```go
-import "common/constants"
+import "github.com/mysunshines/gocommon/constants"
 
 // 时间格式
 constants.DateTimeFormat     // "2006-01-02 15:04:05"
@@ -331,12 +367,25 @@ constants.EnvLogDir     // "LOG_DIR"
 constants.EnvAppEnv     // "APP_ENV"
 constants.EnvConfigPath // "CONFIG_PATH"
 
-// 服务名
-constants.ServiceNameUser    // "user-service"
-constants.ServiceNameArticle // "article-service"
-constants.ServiceNameComment // "comment-service"
-constants.ServiceNameGateway // "gateway"
+// 服务名（跨服务契约，Consul 注册与 grpcclient 注册表共用）
+constants.ServiceNameUser         // "user-service"
+constants.ServiceNameArticle      // "article-service"
+constants.ServiceNameComment      // "comment-service"
+constants.ServiceNameGateway      // "gateway"
+constants.ServiceNameNotification // "notification-service"
+
+// 站内消息契约（gateway / notification-service / 前端三方共用）
+constants.WSPathNotification          // "/ws/notification"（WS 路径，Nginx 转发目标）
+constants.RedisKeyPrefixNotification  // "notification:"（未读计数缓存前缀）
+constants.DefaultCacheTTLNotification // 600s（未读计数缓存 TTL）
+constants.MetricPrefixNotification    // "notification_service"（指标前缀）
+
+// API 路径前缀（网关路由与前端 API_BASE 共用）
+constants.APIPathPrefix // "/api/v1"
+constants.GRPCServiceNameSuffix // "Service"（服务名推导约定：<prefix>-service → <pkg>.v1.<Prefix>Service）
 ```
+
+> **契约常量的意义**：跨服务/跨仓库的字符串（服务名、路径、前缀）集中在此处单一来源，任何一方的改动在编译期传导到所有使用方，避免字符串散落导致的静默不一致。新增微服务应在此登记服务名常量。
 
 ### 统一错误码
 
@@ -368,7 +417,7 @@ constants.ServiceNameGateway // "gateway"
 ## 通用工具
 
 ```go
-import "common/util"
+import "github.com/mysunshines/gocommon/util"
 
 // 哈希与加密
 md5Hash := util.MD5("data")
@@ -410,12 +459,12 @@ util.MinInt(1, 2)  // 1
 
 ---
 
-## 数据库 [调用示例](database/example_database.go)
+## 数据库
 
 ### 基本用法
 
 ```go
-import "common/database"
+import "github.com/mysunshines/gocommon/database"
 
 // Init: 创建连接 + Ping 验证
 if err := database.Init(&conf.Database, conf.App.Env); err != nil {
@@ -567,12 +616,12 @@ GORM 的 `WithContext(ctx)` 会将 `ctx` 传递给底层的 `database/sql`，实
 
 ---
 
-## 缓存 [调用示例](cache/example_cache.go)
+## 缓存
 
 ### 基本用法
 
 ```go
-import "common/cache"
+import "github.com/mysunshines/gocommon/cache"
 
 // 初始化（含 Ping 验证）
 if err := cache.Init(&conf.Redis); err != nil {
@@ -657,7 +706,42 @@ case <-time.After(time.Second):
 // ========== 本地缓存（进程内热点数据，纳秒级）==========
 cache.LocalCacheSet("hot:article:1", articleData)
 val, ok := cache.LocalCacheGet("hot:article:1")
+
+// ========== 热点感知 API（配合 Consul 配置中心热策略）==========
+// 未命中任何热策略时，以下 API 行为与 Set/Get 完全一致，可平滑切换。
+cache.SetSmart(ctx, "article:detail:42", articleData, 5*time.Minute)
+data, err := cache.GetSmart(ctx, "article:detail:42")      // 本地缓存 → 随机分片 → Redis
+raw, err := cache.GetBytesSmart(ctx, "article:detail:42")  // 原始字节（序列化对象场景）
+cache.DeleteSmart(ctx, "article:detail:42")                 // 删全分片 + 本地缓存 + 跨实例失效广播
+exists, _ := cache.ExistsSmart(ctx, "article:detail:42")
+cache.ExpireSmart(ctx, "article:detail:42", 30*time.Minute)
 ```
+
+### 热策略配置（Consul 配置中心动态下发）
+
+`Set / SetNX / Expire` 的 TTL 与 `*Smart` 系列的分片/本地缓存策略，均可通过 **Consul 配置中心**按 key 在线动态下发，秒级生效、无需发版。
+
+- **按 key 动态 TTL**（`redis_ttl`）：命中模式的 key 写入 TTL 被覆盖（`Set/SetNX/Expire` 内部自动套用，业务零改动）；未命中时保持调用方传入的默认值。
+- **hot key 调整**（`hot_keys`）：分片分散（单 key QPS 均摊到 N 个 Redis 分片）+ 本地缓存（热点读卸载到进程内内存，多实例经 pub/sub 失效广播保证最终一致）。
+
+**下发方式**：将 YAML/JSON 写入 Consul KV `config/<service>/<env>`（由 `configcenter.HotConfig.Cache` 承载，`apply` 时自动同步到本包 `cache.SetPolicy`）：
+
+```yaml
+cache:
+  redis_ttl:                  # 按 key 模式覆盖 TTL（秒），支持 * 通配符，精确模式（模式更长者）优先
+    "verify_code:*": 300
+    "session:*": 1800
+    "article:views:*": 86400
+  hot_keys:                   # 热点 key 策略，key 为模式（支持 * 通配符）
+    "article:detail:42":      # 精确模式优先于通配符
+      shard_count: 8          # 分片数（1–64）：>1 时拆成 key:0..N-1，写全量、读随机
+      local_cache_ttl: 5      # 本地缓存秒数：>0 时读取先查进程内缓存，miss 回源并回填
+    "user:info:*":
+      shard_count: 4
+      local_cache_ttl: 10
+```
+
+> 修改 Consul KV 后由 `Watch` 长轮询即时感知；热点策略集合变化时会自动清空本地缓存，避免旧 TTL 的脏值残留。
 
 ### 底层原理
 
@@ -852,10 +936,10 @@ func (lc *LocalCache) cleanup() {
 
 ---
 
-## Goroutine 池 [调用示例](pool/example_pool.go)
+## Goroutine 池
 
 ```go
-import "common/pool"
+import "github.com/mysunshines/gocommon/pool"
 
 // 创建池（默认 GOMAXPROCS*2 并发度）
 p := pool.New(pool.WithMaxWorkers(8))
@@ -966,6 +1050,234 @@ Submit → p.sem <- struct{}{}  // 槽位满则阻塞
 
 ---
 
+## gRPC 客户端（服务间调用统一入口）
+
+`grpcclient` 是微服务间 gRPC 调用的唯一入口，统一了服务寻址、连接管理、鉴权透传与韧性控制。**禁止绕过本包直接 `grpc.Dial` 下游服务。**
+
+### 基本用法
+
+```go
+import "github.com/mysunshines/gocommon/grpcclient"
+
+// 方式一（推荐）：直接传下游 pb 生成的全方法名常量
+var resp user.GetUserResponse
+err := grpcclient.SendRequest(ctx, user.UserService_GetUser_FullMethodName,
+    &user.GetUserRequest{UserId: 1}, &resp)
+
+// 方式二：点号风格别名（不便引入下游 pb 时）
+err = grpcclient.SendRequest(ctx, "user.v1.GetUser", &req, &resp)
+
+// 带降级：熔断打开或调用失败时执行 fallback 填充兜底响应
+err = grpcclient.SendRequestWithFallback(ctx, api, req, resp, func(ctx context.Context) error {
+    // 填充 resp 的兜底值...
+    return nil
+})
+```
+
+### 服务寻址
+
+| 机制 | 说明 |
+|------|------|
+| `RegisterService(alias, service, target)` | 启动时静态注册：`RegisterService("user.v1", "user.v1.UserService", "user-service:9101")` |
+| `SetServiceResolver(fn)` | 自定义解析器（如对接 Consul 健康查询动态寻址），优先于注册表 |
+
+### 核心能力（Dial 内置，调用方零配置）
+
+```
+SendRequest(ctx, api, req, resp)
+  │
+  ├─ parseAPI(api)              # 拆出 alias + method（兼容 "/" 与 "." 两种风格）
+  ├─ resolveTarget(alias)       # resolver 优先，其次注册表
+  ├─ getConn(target)            # 按 host:port 缓存 *grpc.ClientConn（含重连）
+  │     └─ AuthForwardInterceptor  # 自动从 ctx 取原始 JWT 透传到下游 metadata
+  ├─ resilience.ForService(alias)  # 按下游隔离的超时/熔断/限流策略
+  └─ conn.Invoke(ctx, "/<service>/<method>", req, resp)
+```
+
+### 鉴权透传链（防越权的关键）
+
+```
+上游请求（带 Authorization）
+  → 服务 A GRPCAuthInterceptor 解析 JWT，原始 token 存入 ctx（grpcTokenKey）
+  → 业务代码 ctx 调 grpcclient.SendRequest
+  → AuthForwardInterceptor 从 ctx 取 token 注入下游 metadata
+  → 服务 B GRPCAuthInterceptor 校验并提取身份
+```
+
+服务 A 的 handler 若用 `context.Background()` 发起下游调用会丢失 token——链式调用务必透传请求 ctx。
+
+---
+
+## Consul 服务注册
+
+`consul` 包提供微服务向 Consul 注册/注销的轻量实现，**零第三方 SDK**（标准库直接调 Consul HTTP API）。
+
+### 基本用法
+
+```go
+import "github.com/mysunshines/gocommon/consul"
+
+consul.UseConsulDiscovery(cfg.Consul.Address) // 初始化解析器
+
+deregister, err := consul.Register(consul.Registration{
+    Name:               cfg.App.Name,
+    ConsulAddress:      cfg.Consul.Address,
+    Address:            cfg.App.Host,   // 留空时自动探测容器 IP（非 loopback IPv4）
+    GRPCPort:           cfg.GRPC.Port,
+    HTTPPort:           cfg.HTTP.Port,
+    CheckInterval:      cfg.Consul.CheckInterval,
+    DeregisterCritical: cfg.Consul.DeregisterCritical,
+    Canary:             consul.CanaryFromEnv(),        // BLOG_CANARY=true 时标记金丝雀
+    Version:            consul.VersionFromEnv(Version), // SERVICE_VERSION 环境变量可覆盖
+})
+defer deregister() // 进程退出时注销
+```
+
+### 设计要点
+
+| 要点 | 说明 |
+|------|------|
+| **地址自动探测** | 默认取本机非 loopback IPv4——Docker bridge 网络下即容器 IP，同网络其它容器可达；可用 `ADVERTISE_ADDR` 环境变量覆盖 |
+| **降级友好** | 注册失败仅返回 error 不 panic，无 Consul 的本地开发环境可照常运行 |
+| **金丝雀标记** | `Canary` + `Version` 写入 Consul Tag/Meta，配合 gateway 的 RoutingPolicy 实现按版本加权分流（同一镜像用环境变量区分 stable/canary） |
+
+---
+
+## 配置中心（Consul KV 热更）
+
+`configcenter` 基于 Consul KV 实现配置热更：变更经长轮询 Watch 即时感知，秒级生效、无需发版。
+
+### 基本用法
+
+```go
+import "github.com/mysunshines/gocommon/configcenter"
+
+client := configcenter.New(cfg.Consul.Address)
+key := configcenter.Key(cfg.App.Name, cfg.App.Env) // "config/<service>/<env>"
+
+var hc configcenter.HotConfig
+if err := client.Load(key, &hc); err != nil && err != configcenter.ErrNotFound {
+    log.Warnf("load hot config failed: %v", err)
+}
+
+go client.Watch(key, &hc, func() {
+    // KV 变更回调：hc 已被原子替换为最新值
+    resilience.ApplySpecs(hc.Resilience)
+    cache.SetPolicy(hc.Cache)
+})
+```
+
+### 可热更的配置项（HotConfig）
+
+```yaml
+# Consul KV: config/<service>/<env>（YAML 或 JSON）
+log_level: debug                 # 日志级别即时切换
+rate_limit:                      # 入站限流阈值（本服务作为被调用方的总闸）
+  enabled: true
+  qps: 500
+jwt_expire_time: 168
+resilience:                      # 出站韧性（本服务作为调用方，按下游隔离）
+  user.v1.UserService:
+    timeout_sec: 3
+    circuit: { max_requests: 5, interval_sec: 10, timeout_sec: 5 }
+server:                          # HTTP 超时参数
+  http_default_timeout: 30
+cache:                           # Redis TTL 覆盖 + 热点 key 策略（见缓存章节）
+  redis_ttl: { "session:*": 1800 }
+  hot_keys: { "article:detail:*": { shard_count: 8, local_cache_ttl: 5 } }
+```
+
+> **RateLimit 与 Resilience 的语义区分**：前者是本服务的**入站**总限流（被调用方，一个总阈值）；后者是本服务对每个下游的**出站**韧性（调用方，按下游隔离）。二者方向相反，在同一份 YAML 中并列。
+
+---
+
+## 韧性策略（resilience）
+
+`resilience` 聚合**超时 + 熔断 + 限流 + 降级**四种控制，按下游服务 key 隔离（一个下游故障不影响对其它下游的调用）。
+
+### Policy 结构
+
+```go
+type Policy struct {
+    Timeout   time.Duration       // 单次出站调用超时（0 = 默认）
+    Circuit   CircuitConfig       // 熔断：Enabled/MaxRequests/Interval/Timeout/FailureRate
+    RateLimit RateLimitConfig     // 出站限流：保护自身不被单一下游拖垮
+    Fallback  func(ctx) (any, error) // 降级：熔断打开或致命错误时返回兜底
+}
+```
+
+### 执行模型
+
+```
+policy.Execute(ctx, invoke, fallback)
+  │
+  ├─ 超时控制：ctx.WithTimeout(Timeout)
+  ├─ 出站限流：令牌桶 Allow()，超限直接降级
+  ├─ 熔断器（按 serviceKey 隔离的实例）：
+  │    CLOSED ──错误率超阈值──▶ OPEN ──Timeout 后──▶ HALF_OPEN（放 MaxRequests 探测）
+  │      ▲                                            │
+  │      └────────── 探测成功 ────────── 探测失败 ──回到 OPEN
+  └─ invoke 返回致命错误（isFatal）→ fallback 降级填充 resp
+```
+
+### 接入方式
+
+```go
+// 1. 代码直配
+resilience.SetPolicy("user.v1.UserService", resilience.Policy{Timeout: 3 * time.Second})
+
+// 2. 配置中心热更（推荐）
+resilience.ApplySpecs(hc.Resilience)
+
+// 3. 经 grpcclient 自动生效（SendRequestWithFallback 内部调用 ForService(alias).Execute）
+```
+
+---
+
+## OpenTelemetry 链路追踪（observability）
+
+用 OTel 的 TraceID 作为全链路唯一 ID，替换早期自研的随机 X-Trace-ID，使**日志（Loki）与链路追踪（Tempo/Jaeger）共用同一个 trace_id**。
+
+### 基本用法
+
+```go
+import "github.com/mysunshines/gocommon/observability"
+
+// main.go 初始化（未启用时各 API 均为安全空操作）
+observability.InitAndRegister(cfg.App.Name, cfg.OTel)
+defer observability.ShutdownGlobal(context.Background())
+
+// gRPC server 自动挂载 OTel 拦截器
+grpc.NewServer(observability.GRPCServerOptions()...)
+
+// 业务代码取当前 TraceID（写日志、透传）
+traceID := observability.TraceIDFromContext(ctx)
+```
+
+### 配置
+
+```yaml
+otel:
+  enabled: false                # 默认关闭，配好 Tempo/otel-collector 后开启
+  endpoint: "otel-collector:4317" # OTLP gRPC 上报地址
+```
+
+---
+
+## 其它工具包速览
+
+| 包 | 用途 | 典型调用方 |
+|----|------|-----------|
+| `retry` | 指数退避 + 抖动的可重试执行器（邮件、Prometheus 查询等瞬时失败场景） | report-service |
+| `scheduler` | 零依赖定时调度器，支持 `daily HH:MM` / `weekly <Dow> HH:MM` / `interval 30m` 三种规格 | report-service（定时报表） |
+| `notify` | net/smtp 邮件发送，支持 HTML 正文与内联图片（Content-ID） | report-service |
+| `prometheus` | Prometheus HTTP 查询客户端（即时/区间查询，解析为时间序列结构） | report-service |
+| `minio` | MinIO / S3 兼容对象存储轻量封装（仅依赖官方 SDK，不绑业务） | gateway（文件上传） |
+| `upload` | Web 框架无关的文件上传落盘（不绑定 gin/echo） | 各业务服务 |
+| `captcha` | 图形验证码生成与校验 | user-service |
+
+---
+
 ## HTTP 客户端
 
 提供两套实现，API 完全一致，按需切换：
@@ -975,10 +1287,10 @@ Submit → p.sem <- struct{}{}  // 槽位满则阻塞
 | `Client` | `net/http` | 通用场景、需要 HTTP/2、低频调用 |
 | `FastClient` | `fasthttp` | 高 QPS 内部调用、对延迟敏感 |
 
-### 原生 Client（net/http） [调用示例](http/example_http.go)
+### 原生 Client（net/http）
 
 ```go
-import httpclient "common/http"
+import httpclient "github.com/mysunshines/gocommon/http"
 
 client := httpclient.New(
     httpclient.WithBaseURL("http://api.example.com"),
@@ -1008,7 +1320,7 @@ resp.IsSuccess()  // 2xx
 resp.Unmarshal(&result)  // JSON 反序列化
 ```
 
-### FastClient（fasthttp） [调用示例](http/fast_http_example.go)
+### FastClient（fasthttp）
 
 ```go
 // API 与原生 Client 完全一致，仅构造函数不同
@@ -1166,7 +1478,7 @@ fasthttp:
 ### 基本用法
 
 ```go
-import "common/tcp"
+import "github.com/mysunshines/gocommon/tcp"
 
 client, err := tcp.New("localhost:8080",
     tcp.WithReadTimeout(30 * time.Second),
@@ -1347,7 +1659,7 @@ SetKeepAlivePeriod(30s) → TCP_KEEPIDLE = 30s
 ### 基本用法
 
 ```go
-import "common/udp"
+import "github.com/mysunshines/gocommon/udp"
 
 client, err := udp.New("localhost:8080",
     udp.WithLocalAddress("0.0.0.0:0"),  // 指定本地端口（可选）
@@ -1507,7 +1819,7 @@ UDP 不提供可靠性保障，丢包可能发生在：
 ### 基本用法
 
 ```go
-import "common/kafka"
+import "github.com/mysunshines/gocommon/kafka"
 
 // ========== 生产者 ==========
 producer := kafka.NewProducer([]string{"localhost:9092"}, "my-topic")
@@ -1753,10 +2065,10 @@ Producer.Send()                           Consumer.ReadMessage()
 ### 基本用法
 
 ```go
-import "common/metrics"
+import "github.com/mysunshines/gocommon/metrics"
 
-// 初始化（注册所有指标到 DefaultRegisterer）
-metrics.Init()
+// 初始化（注册所有指标到 DefaultRegisterer），传入服务名用于带 service 标签的指标
+metrics.Init(constants.ServiceNameArticle)
 
 // ========== HTTP 请求指标（由 MetricsMiddleware 自动记录）==========
 metrics.RecordRequest("GET", "/api/v1/users", 200, duration)
@@ -1825,8 +2137,13 @@ HTTP 层:
 
 缓存:
   cache_operations_total{operation, status}             ← Counter
-  redis_hit_rate                                         ← Gauge (0.0/1.0)
+  redis_cache_hits_total{service}                       ← Counter
+  redis_cache_misses_total{service}                     ← Counter
   redis_hot_keys_total{key}                             ← Counter
+
+  # 命中率比率（推荐在 PromQL 中计算，而非直接采集 0/1 Gauge）：
+  # sum(rate(redis_cache_hits_total[5m])) / clamp_min(sum(rate(redis_cache_hits_total[5m])) + sum(rate(redis_cache_misses_total[5m])), 0)
+  # 按服务拆分：sum(rate(redis_cache_hits_total{service="article-service"}[5m])) / ...
 
 RPC:
   rpc_requests_total{service, method, status}           ← Counter
@@ -1931,10 +2248,34 @@ NewCounterVec(..., map[string]string{"method":"", "endpoint":""})
 
 ## 中间件
 
-### 基本用法
+中间件分两套：**Gin HTTP 中间件**（服务自身 HTTP 入口）与 **gRPC 拦截器**（服务间/gateway→服务的 gRPC 入口）。业务流量主体走 gRPC，gRPC 拦截器是鉴权真正落地的地方。
+
+### gRPC 拦截器（一元服务端）
 
 ```go
-import "common/middleware"
+import "github.com/mysunshines/gocommon/middleware"
+
+grpcServer := grpc.NewServer(grpc.ChainUnaryInterceptor(
+    yourTimeoutAndBreakerInterceptor,     // 自定义：超时 + gobreaker（各服务在 main.go 组装）
+    middleware.GRPCAuthInterceptor(),     // 鉴权：校验 metadata authorization，注入身份到 ctx
+    middleware.GRPCMetricsInterceptor(svc),// 指标：rpc_requests_total 等
+    middleware.GRPCLoggingInterceptor(),  // 日志：从 metadata 提取 traceID 串联链路
+))
+
+// handler 内取身份（写方法在开头调用，未登录返回 Unauthenticated）
+uid, err := middleware.RequireGRPCAuth(ctx)      // (uint, error)
+role, _ := middleware.GetGRPCRole(ctx)            // 角色判断（管理员接口用）
+token, ok := middleware.GetGRPCToken(ctx)         // 原始 JWT（供 AuthForwardInterceptor 透传）
+```
+
+**GRPCAuthInterceptor 的行为**：携带 token 时校验签名，无效直接 Unauthenticated；未携带 token 时放行（匿名），是否要求登录由 handler 调 `RequireGRPCAuth` 决定——公开方法（列表/详情）不强制，写方法必须强制。
+
+**关键约定**：gRPC handler 禁止信任请求体的 user_id 字段（可伪造，IDOR 漏洞），身份一律取自 `RequireGRPCAuth(ctx)`；下游调用由 `grpcclient` 的 AuthForwardInterceptor 自动透传 token。
+
+### Gin HTTP 中间件基本用法
+
+```go
+import "github.com/mysunshines/gocommon/middleware"
 
 r := gin.Default()
 
@@ -1949,8 +2290,8 @@ r.Use(middleware.CORSMiddleware())
 // Panic 恢复
 r.Use(middleware.RecoveryMiddleware())
 
-// JWT 认证
-r.Use(middleware.JWTValidMiddleware())
+// JWT 认证（鉴权模式：缺失/无效 token 返回 401）
+r.Use(middleware.AuthMiddleware(true))
 
 // 上下文传播（将 JWT 中的 user_id 注入 context）
 r.Use(middleware.ContextMiddleware())
@@ -1982,7 +2323,7 @@ func handler(c *gin.Context) {
         TraceMiddleware (X-Trace-ID)
           CORSMiddleware
             RecoveryMiddleware (defer + recover)
-              JWTValidMiddleware (解析令牌)
+              AuthMiddleware (解析令牌)
                 ContextMiddleware (注入 context)
                   LoggingMiddleware
                     MetricsMiddleware
@@ -2043,7 +2384,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 ```
 Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
-JWTValidMiddleware(c):
+AuthMiddleware(true)(c):
   1. 提取 Header: c.GetHeader("Authorization")
   2. 校验格式: "Bearer <token>"
   3. 解析 JWT: jwt.Parse(tokenString, keyFunc)
@@ -2147,7 +2488,7 @@ func TraceMiddleware() gin.HandlerFunc {
 ### 基本用法
 
 ```go
-import "common/response"
+import "github.com/mysunshines/gocommon/response"
 
 func handler(c *gin.Context) {
     // 成功响应
@@ -2499,4 +2840,12 @@ go get gorm.io/gorm
 go get gorm.io/driver/mysql
 go get golang.org/x/sync
 go get gopkg.in/yaml.v3
+go get google.golang.org/grpc
+go get google.golang.org/protobuf
+go get go.uber.org/zap
+go get github.com/gorilla/websocket
+go get github.com/minio/minio-go/v7
+go get go.opentelemetry.io/otel
 ```
+
+> 业务服务引用方式：go.mod 中 `require github.com/mysunshines/gocommon v1.5.x`，本地联调可加 `replace github.com/mysunshines/gocommon => ../gocommon`。

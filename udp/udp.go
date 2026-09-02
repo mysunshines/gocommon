@@ -8,17 +8,23 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+	"github.com/mysunshines/gocommon/resilience"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client UDP 客户端
 type Client struct {
-	address      string
-	localAddr    *net.UDPAddr
-	conn         *net.UDPConn
-	connMu       sync.RWMutex
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	bufSize      int
+	address        string        // 远端地址 host:port
+	localAddr      *net.UDPAddr  // 本地绑定地址（nil 表示由系统分配）
+	conn           *net.UDPConn  // UDP 连接
+	connMu         sync.RWMutex  // 保护 conn 的并发读写
+	readTimeout    time.Duration // 读超时（0 表示不限）
+	writeTimeout   time.Duration // 写超时（0 表示不限）
+	bufSize        int           // 接收缓冲大小
+	resilienceKey  string        // resilience serviceKey；非空时其 Timeout 覆盖读写超时
 }
 
 // Config 连接配置
@@ -49,6 +55,11 @@ func New(address string, opts ...Option) (*Client, error) {
 	// 解析服务器地址
 	udpAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] resolve address failed")
 		return nil, fmt.Errorf("failed to resolve UDP address: %w", err)
 	}
 
@@ -59,11 +70,33 @@ func New(address string, opts ...Option) (*Client, error) {
 		c.conn, err = net.ListenUDP("udp", nil)
 	}
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] create connection failed")
 		return nil, fmt.Errorf("failed to create UDP connection: %w", err)
 	}
 
 	c.address = udpAddr.String()
 	return c, nil
+}
+
+// applyDeadlines 统一设置读写截止时间：若设置了 resilienceKey，则优先使用
+// resilience 策略的 Timeout 覆盖客户端自身的读写超时，实现按下游动态调超时。
+func (c *Client) applyDeadlines(conn *net.UDPConn) {
+	readTO, writeTO := c.readTimeout, c.writeTimeout
+	if c.resilienceKey != "" {
+		if p := resilience.ForService(c.resilienceKey); p.Timeout > 0 {
+			readTO, writeTO = p.Timeout, p.Timeout
+		}
+	}
+	if readTO > 0 {
+		conn.SetReadDeadline(time.Now().Add(readTO))
+	}
+	if writeTO > 0 {
+		conn.SetWriteDeadline(time.Now().Add(writeTO))
+	}
 }
 
 // WithLocalAddress 设置本地地址
@@ -96,6 +129,14 @@ func WithBufferSize(size int) Option {
 	}
 }
 
+// WithResilienceKey 设置 resilience 的 serviceKey；非空时 resilience 策略的 Timeout
+// 会覆盖客户端自身的读写超时，实现按下游动态调超时。
+func WithResilienceKey(key string) Option {
+	return func(c *Client) {
+		c.resilienceKey = key
+	}
+}
+
 // Send 发送数据
 func (c *Client) Send(ctx context.Context, data []byte) error {
 	c.connMu.RLock()
@@ -113,13 +154,17 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 	}
 
 	// 设置超时
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	// 发送数据
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] send failed")
 		return fmt.Errorf("send failed: %w", err)
 	}
 
@@ -145,12 +190,16 @@ func (c *Client) SendTo(ctx context.Context, address string, data []byte) error 
 		return fmt.Errorf("failed to resolve address: %w", err)
 	}
 
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] sendTo failed")
 		return fmt.Errorf("send failed: %w", err)
 	}
 
@@ -171,13 +220,17 @@ func (c *Client) Receive(ctx context.Context) ([]byte, *net.UDPAddr, error) {
 		return nil, nil, fmt.Errorf("connection is nil")
 	}
 
-	if c.readTimeout > 0 {
-		conn.SetReadDeadline(time.Now().Add(c.readTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	data := make([]byte, c.bufSize)
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, addr, err := conn.ReadFromUDP(data)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] receive failed")
 		return nil, nil, fmt.Errorf("receive failed: %w", err)
 	}
 
@@ -194,12 +247,16 @@ func (c *Client) ReceiveWithBuffer(ctx context.Context, buf []byte) (int, *net.U
 		return 0, nil, fmt.Errorf("connection is nil")
 	}
 
-	if c.readTimeout > 0 {
-		conn.SetReadDeadline(time.Now().Add(c.readTimeout))
-	}
+	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, addr, err := conn.ReadFromUDP(buf)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"addr":                    c.address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] receiveWithBuffer failed")
 		return 0, nil, fmt.Errorf("receive failed: %w", err)
 	}
 
@@ -244,17 +301,21 @@ func (c *Client) Broadcast(ctx context.Context, port int, data []byte) error {
 		return fmt.Errorf("connection is nil")
 	}
 
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
 	// 设置广播选项
 	if err := conn.SetWriteBuffer(c.bufSize); err != nil {
 		return fmt.Errorf("failed to set write buffer: %w", err)
 	}
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"port":                    port,
+			"err":                     err.Error(),
+		}).Errorf("[udp] broadcast failed")
 		return fmt.Errorf("broadcast failed: %w", err)
 	}
 
@@ -280,12 +341,16 @@ func (c *Client) Multicast(ctx context.Context, multicastAddr string, data []byt
 		return fmt.Errorf("connection is nil")
 	}
 
-	if c.writeTimeout > 0 {
-		conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
+	c.applyDeadlines(conn)
 
+	traceID := middleware.GetTraceIDFromContext(ctx)
 	n, err := conn.WriteToUDP(data, addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"multicast_addr":          multicastAddr,
+			"err":                     err.Error(),
+		}).Errorf("[udp] multicast failed")
 		return fmt.Errorf("multicast failed: %w", err)
 	}
 
@@ -343,6 +408,11 @@ func ServerConn(address string) (*net.UDPConn, error) {
 
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: "",
+			"address":                 address,
+			"err":                     err.Error(),
+		}).Errorf("[udp] server listen failed")
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 

@@ -15,7 +15,7 @@ import (
 //
 //	New(...)     → NewFast(...)
 //	WithXxx      → WithFastXxx
-func ExampleFast_main() {
+func ExampleNewFast_main() {
 	ctx := context.Background()
 
 	// 创建 fasthttp 客户端（比原生 net/http 快 2-3x）
@@ -44,7 +44,7 @@ func ExampleFast_main() {
 }
 
 // ExampleFast_quickMethods 演示 FastClient 便捷方法
-func ExampleFast_quickMethods() {
+func ExampleNewFast_quickMethods() {
 	ctx := context.Background()
 
 	// QuickGet — 一行发起 GET 请求
@@ -79,7 +79,7 @@ func ExampleFast_quickMethods() {
 }
 
 // ExampleFast_connectionPool 演示连接池与性能调优
-func ExampleFast_connectionPool() {
+func ExampleNewFast_connectionPool() {
 	ctx := context.Background()
 
 	client := NewFast(
@@ -97,7 +97,7 @@ func ExampleFast_connectionPool() {
 }
 
 // ExampleFast_switching 演示如何从原生 Client 切换到 FastClient
-func ExampleFast_switching() {
+func ExampleNewFast_switching() {
 	ctx := context.Background()
 
 	// 原生 net/http 客户端

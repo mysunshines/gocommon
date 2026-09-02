@@ -26,10 +26,10 @@ type Result struct {
 
 // Future 表示一个异步任务的结果句柄，调用 Get 阻塞等待直到任务完成。
 type Future struct {
-	done  chan struct{}
-	value interface{}
-	err   error
-	once  sync.Once
+	done  chan struct{} // 完成信号，关闭表示任务已结束
+	value interface{}   // 任务返回值（成功时有效）
+	err   error         // 任务错误（失败时有效）
+	once  sync.Once     // 保证结果仅被设置一次（由 worker 调用）
 }
 
 // Get 阻塞等待任务完成，返回结果与错误。
@@ -66,13 +66,13 @@ type Stats struct {
 
 // Pool 是一个有界 goroutine 池，通过 semaphore 控制并发数。
 type Pool struct {
-	maxWorkers int
-	sem        chan struct{}
+	maxWorkers int           // 最大并发 worker 数
+	sem        chan struct{} // 信号量，获取后才允许执行任务
 
-	active    atomic.Int64
-	submitted atomic.Int64
-	completed atomic.Int64
-	failed    atomic.Int64
+	active    atomic.Int64 // 当前正在执行的任务数
+	submitted atomic.Int64 // 累计提交任务数
+	completed atomic.Int64 // 累计完成任务数
+	failed    atomic.Int64 // 累计失败任务数
 }
 
 // Option 函数式选项。

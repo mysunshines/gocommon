@@ -7,22 +7,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+
 	"github.com/segmentio/kafka-go"
+	"github.com/sirupsen/logrus"
 )
 
 // Producer Kafka 生产者
 type Producer struct {
-	writer *kafka.Writer
-	mu     sync.RWMutex
+	writer *kafka.Writer // Kafka 写入器（批量发送）
+	mu     sync.RWMutex  // 保护 writer 并发写
 }
 
 // Consumer Kafka 消费者
 type Consumer struct {
-	reader   *kafka.Reader
-	handlers []MessageHandler
-	mu       sync.RWMutex
-	running  bool
-	stopCh   chan struct{}
+	reader   *kafka.Reader   // Kafka 读取器
+	handlers []MessageHandler // 消息处理器列表
+	mu       sync.RWMutex    // 保护 handlers/running 并发读写
+	running  bool            // 消费循环是否正在运行
+	stopCh   chan struct{}   // 停止信号，关闭后退出消费循环
 }
 
 // MessageHandler 消息处理函数
@@ -79,8 +84,20 @@ func (p *Producer) Send(ctx context.Context, key, value []byte) error {
 		Value: value,
 		Time:  time.Now(),
 	}
-
-	return p.writer.WriteMessages(ctx, msg)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err := p.writer.WriteMessages(ctx, msg); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"topic":                   p.writer.Topic,
+			"err":                     err.Error(),
+		}).Errorf("[kafka] send message failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"topic":                   p.writer.Topic,
+	}).Debugf("[kafka] message sent")
+	return nil
 }
 
 // SendWithHeaders 发送带 Header 的消息
@@ -99,8 +116,20 @@ func (p *Producer) SendWithHeaders(ctx context.Context, key, value []byte, heade
 		Headers: hdrs,
 		Time:    time.Now(),
 	}
-
-	return p.writer.WriteMessages(ctx, msg)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err := p.writer.WriteMessages(ctx, msg); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"topic":                   p.writer.Topic,
+			"err":                     err.Error(),
+		}).Errorf("[kafka] send message with headers failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"topic":                   p.writer.Topic,
+	}).Debugf("[kafka] message sent")
+	return nil
 }
 
 // SendJSON 发送 JSON 消息
@@ -117,7 +146,22 @@ func (p *Producer) SendBatch(ctx context.Context, messages []kafka.Message) erro
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return p.writer.WriteMessages(ctx, messages...)
+	traceID := middleware.GetTraceIDFromContext(ctx)
+	if err := p.writer.WriteMessages(ctx, messages...); err != nil {
+		log.WithFields(logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"topic":                   p.writer.Topic,
+			"count":                   len(messages),
+			"err":                     err.Error(),
+		}).Errorf("[kafka] send batch failed")
+		return err
+	}
+	log.WithFields(logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"topic":                   p.writer.Topic,
+		"count":                   len(messages),
+	}).Debugf("[kafka] batch sent")
+	return nil
 }
 
 // Close 关闭生产者
@@ -185,7 +229,13 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 			for _, handler := range handlers {
 				if err := handler(ctx, msg.Key, msg.Value); err != nil {
-					fmt.Printf("message handler error: %v\n", err)
+					log.WithFields(logrus.Fields{
+						constants.LogFieldTraceID: middleware.GetTraceIDFromContext(ctx),
+						"topic":                   c.reader.Config().Topic,
+						"partition":               msg.Partition,
+						"offset":                  msg.Offset,
+						"err":                     err.Error(),
+					}).Errorf("[kafka] message handler error")
 				}
 			}
 		}
@@ -259,13 +309,13 @@ func (c *Consumer) Stats() kafka.ReaderStats {
 
 // Message Kafka 消息结构
 type Message struct {
-	Topic     string
-	Partition int
-	Offset    int64
-	Key       []byte
-	Value     []byte
-	Headers   map[string]string
-	Time      time.Time
+	Topic     string            // 所属主题
+	Partition int               // 分区编号
+	Offset    int64             // 分区内偏移量
+	Key       []byte            // 消息键（用于分区路由）
+	Value     []byte            // 消息体
+	Headers   map[string]string // 消息头
+	Time      time.Time         // 消息时间戳
 }
 
 // ParseMessage 解析 Kafka 消息
@@ -295,7 +345,7 @@ type ConsumerGroupHandler interface {
 
 // SimpleHandler 简单消息处理器
 type SimpleHandler struct {
-	Handler MessageHandler
+	Handler MessageHandler // 实际消息处理逻辑
 }
 
 // Setup 实现 ConsumerGroupHandler
@@ -317,7 +367,10 @@ func (h *SimpleHandler) ConsumeClaim(ctx context.Context, messages <-chan kafka.
 				return nil
 			}
 			if err := h.Handler(ctx, msg.Key, msg.Value); err != nil {
-				fmt.Printf("consumer group handler error: %v\n", err)
+				log.WithFields(logrus.Fields{
+					constants.LogFieldTraceID: middleware.GetTraceIDFromContext(ctx),
+					"err":                     err.Error(),
+				}).Errorf("[kafka] consumer group handler error")
 			}
 		case <-ctx.Done():
 			return ctx.Err()

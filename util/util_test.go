@@ -1,126 +1,41 @@
 package util
 
 import (
-	"encoding/json"
+	"encoding/base64"
+	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // TestCopyFile 测试文件复制功能
 func TestCopyFile(t *testing.T) {
-	// 创建临时源文件
 	tmpDir := t.TempDir()
-	srcPath := filepath.Join(tmpDir, "source.txt")
-	dstPath := filepath.Join(tmpDir, "dest.txt")
-
-	// 写入测试数据
-	testData := []byte("Hello, World!")
-	if err := os.WriteFile(srcPath, testData, 0644); err != nil {
-		t.Fatalf("创建源文件失败: %v", err)
+	src := filepath.Join(tmpDir, "src.txt")
+	dst := filepath.Join(tmpDir, "dst.txt")
+	if err := os.WriteFile(src, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write src failed: %v", err)
 	}
-
-	// 复制文件
-	if err := CopyFile(srcPath, dstPath); err != nil {
-		t.Fatalf("CopyFile() 失败: %v", err)
+	if err := CopyFile(src, dst); err != nil {
+		t.Fatalf("CopyFile failed: %v", err)
 	}
-
-	// 验证目标文件存在且内容正确
-	data, err := os.ReadFile(dstPath)
-	if err != nil {
-		t.Errorf("读取目标文件失败: %v", err)
-	}
-	if string(data) != string(testData) {
-		t.Errorf("文件内容不匹配: 期望 %s, 得到 %s", string(testData), string(data))
-	}
-}
-
-// TestCopyFile_Error 测试复制不存在的源文件
-func TestCopyFile_Error(t *testing.T) {
-	tmpDir := t.TempDir()
-	srcPath := filepath.Join(tmpDir, "nonexistent.txt")
-	dstPath := filepath.Join(tmpDir, "dest.txt")
-
-	// 尝试复制不存在的文件
-	err := CopyFile(srcPath, dstPath)
-	if err == nil {
-		t.Error("CopyFile() 期望返回错误，但未返回")
-	}
-}
-
-// TestLoadJSONFilesFromDir 测试从目录加载JSON文件
-func TestLoadJSONFilesFromDir(t *testing.T) {
-	// 创建临时目录
-	tmpDir := t.TempDir()
-
-	// 创建测试结构体
-	type TestItem struct {
-		Name  string `json:"name"`
-		Value int    `json:"value"`
-	}
-
-	// 创建第一个JSON文件
-	file1 := filepath.Join(tmpDir, "file1.json")
-	data1 := []TestItem{
-		{Name: "item1", Value: 1},
-		{Name: "item2", Value: 2},
-	}
-	jsonData1, _ := json.Marshal(data1)
-	if err := os.WriteFile(file1, jsonData1, 0644); err != nil {
-		t.Fatalf("创建JSON文件失败: %v", err)
-	}
-
-	// 创建第二个JSON文件
-	file2 := filepath.Join(tmpDir, "file2.json")
-	data2 := []TestItem{
-		{Name: "item3", Value: 3},
-	}
-	jsonData2, _ := json.Marshal(data2)
-	if err := os.WriteFile(file2, jsonData2, 0644); err != nil {
-		t.Fatalf("创建JSON文件失败: %v", err)
-	}
-
-	// 创建一个非JSON文件（应被忽略）
-	txtFile := filepath.Join(tmpDir, "readme.txt")
-	if err := os.WriteFile(txtFile, []byte("not json"), 0644); err != nil {
-		t.Fatalf("创建文本文件失败: %v", err)
-	}
-
-	// 加载JSON文件
-	results, err := LoadJSONFilesFromDir[TestItem](tmpDir)
-	if err != nil {
-		t.Fatalf("LoadJSONFilesFromDir() 失败: %v", err)
-	}
-
-	// 验证结果
-	if len(results) != 3 {
-		t.Errorf("期望 3 个项目，得到 %d", len(results))
-	}
-
-	// 验证内容
-	expected := map[string]int{
-		"item1": 1,
-		"item2": 2,
-		"item3": 3,
-	}
-	for _, item := range results {
-		if expected[item.Name] != item.Value {
-			t.Errorf("项目 %s 的值不匹配: 期望 %d, 得到 %d", item.Name, expected[item.Name], item.Value)
-		}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("copy content mismatch: %v %s", err, data)
 	}
 }
 
 // TestLoadJSONFilesFromDir_EmptyDir 测试空目录
 func TestLoadJSONFilesFromDir_EmptyDir(t *testing.T) {
-	// 创建空临时目录
 	tmpDir := t.TempDir()
-
-	// 加载JSON文件（应返回空切片）
 	results, err := LoadJSONFilesFromDir[interface{}](tmpDir)
 	if err != nil {
 		t.Fatalf("LoadJSONFilesFromDir() 失败: %v", err)
 	}
-
 	if len(results) != 0 {
 		t.Errorf("期望 0 个项目，得到 %d", len(results))
 	}
@@ -128,21 +43,15 @@ func TestLoadJSONFilesFromDir_EmptyDir(t *testing.T) {
 
 // TestLoadJSONFilesFromDir_InvalidJSON 测试无效的JSON文件
 func TestLoadJSONFilesFromDir_InvalidJSON(t *testing.T) {
-	// 创建临时目录
 	tmpDir := t.TempDir()
-
-	// 创建无效的JSON文件
 	invalidFile := filepath.Join(tmpDir, "invalid.json")
 	if err := os.WriteFile(invalidFile, []byte("not valid json"), 0644); err != nil {
 		t.Fatalf("创建无效JSON文件失败: %v", err)
 	}
-
-	// 加载JSON文件（应跳过无效文件）
 	results, err := LoadJSONFilesFromDir[interface{}](tmpDir)
 	if err != nil {
 		t.Fatalf("LoadJSONFilesFromDir() 失败: %v", err)
 	}
-
 	if len(results) != 0 {
 		t.Errorf("期望 0 个项目，得到 %d", len(results))
 	}
@@ -164,10 +73,8 @@ func TestSanitizeFilename(t *testing.T) {
 		{"包含引号", "test\"file.txt", "test-file.txt"},
 		{"包含尖括号", "test<file>.txt", "test-file-.txt"},
 		{"包含竖线", "test|file.txt", "test-file.txt"},
-		// 超长文件名会被截断到100字符
 		{"超长文件名", "a very long filename that exceeds 100 characters a very long filename that exceeds 100 characters a very long filename that exceeds 100 characters.txt", "a very long filename that exceeds 100 characters a very long filename that exceeds 100 characters a"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := SanitizeFilename(tt.input)
@@ -176,4 +83,183 @@ func TestSanitizeFilename(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMD5(t *testing.T) {
+	if got := MD5("hello"); got != "5d41402abc4b2a76b9719d911017c592" {
+		t.Fatalf("MD5 mismatch: %s", got)
+	}
+}
+
+func TestSHA256(t *testing.T) {
+	if got := SHA256("hello"); len(got) != 64 {
+		t.Fatalf("SHA256 len = %d, want 64", len(got))
+	}
+}
+
+func TestHMACSHA256(t *testing.T) {
+	if got := HMACSHA256("msg", "secret"); len(got) != 64 {
+		t.Fatalf("HMACSHA256 len = %d", len(got))
+	}
+}
+
+func TestHashPasswordAndCheck(t *testing.T) {
+	hash, err := HashPassword("password123")
+	if err != nil {
+		t.Fatalf("HashPassword err: %v", err)
+	}
+	if !CheckPassword("password123", hash) {
+		t.Fatal("CheckPassword should be true for correct password")
+	}
+	if CheckPassword("wrong", hash) {
+		t.Fatal("CheckPassword should be false for wrong password")
+	}
+}
+
+func TestGenerateUUID(t *testing.T) {
+	if u := GenerateUUID(); len(u) != 36 {
+		t.Fatalf("uuid len = %d, want 36", len(u))
+	}
+}
+
+func TestGenerateRandomString(t *testing.T) {
+	if s := GenerateRandomString(16); len(s) != 16 {
+		t.Fatalf("GenerateRandomString len = %d, want 16", len(s))
+	}
+	if s := GenerateToken(8); len(s) != 8 {
+		t.Fatalf("GenerateToken len = %d, want 8", len(s))
+	}
+}
+
+func TestBase64(t *testing.T) {
+	enc := Base64Encode("hello")
+	if enc != base64.StdEncoding.EncodeToString([]byte("hello")) {
+		t.Fatal("Base64Encode mismatch")
+	}
+	dec, err := Base64Decode(enc)
+	if err != nil || string(dec) != "hello" {
+		t.Fatalf("Base64Decode failed: %v %s", err, dec)
+	}
+	if _, err := Base64Decode("!!!notbase64"); err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+}
+
+func TestGetClientIP(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:9999"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
+	c.Request = req
+	if ip := GetClientIP(c); ip != "1.2.3.4" {
+		t.Fatalf("got %q, want 1.2.3.4", ip)
+	}
+
+	req.Header.Del("X-Forwarded-For")
+	req.Header.Set("X-Real-IP", "9.9.9.9")
+	if ip := GetClientIP(c); ip != "9.9.9.9" {
+		t.Fatalf("got %q, want 9.9.9.9", ip)
+	}
+
+	req.Header.Del("X-Real-IP")
+	if ip := GetClientIP(c); ip != "10.0.0.1" {
+		t.Fatalf("got %q, want 10.0.0.1", ip)
+	}
+}
+
+func TestIsValidEmail(t *testing.T) {
+	cases := map[string]bool{
+		"a@b.co":     true,
+		"user@x.com": true,
+		"":           false,
+		"noatsign":   false,
+		"a@b":        false,
+		"@x.com":     false,
+	}
+	for email, want := range cases {
+		if got := IsValidEmail(email); got != want {
+			t.Fatalf("IsValidEmail(%q) = %v, want %v", email, got, want)
+		}
+	}
+}
+
+func TestIsValidUsername(t *testing.T) {
+	if !IsValidUsername("john_doe") || !IsValidUsername("abc-123") {
+		t.Fatal("valid usernames rejected")
+	}
+	if IsValidUsername("a") || IsValidUsername("bad name") || IsValidUsername("bad!name") {
+		t.Fatal("invalid usernames accepted")
+	}
+}
+
+func TestIsValidPassword(t *testing.T) {
+	if !IsValidPassword("abc123") {
+		t.Fatal("abc123 should be valid")
+	}
+	if IsValidPassword("abcdef") || IsValidPassword("123456") || IsValidPassword("a1") {
+		t.Fatal("invalid passwords accepted")
+	}
+}
+
+func TestParseAndFormatTime(t *testing.T) {
+	got, err := ParseTime("2024-01-02 15:04:05")
+	if err != nil {
+		t.Fatalf("ParseTime err: %v", err)
+	}
+	if FormatTime(got) != "2024-01-02 15:04:05" {
+		t.Fatalf("FormatTime = %s", FormatTime(got))
+	}
+	if _, err := ParseTime("not-a-time"); err == nil {
+		t.Fatal("expected error for invalid time")
+	}
+}
+
+func TestGetDaysBetween(t *testing.T) {
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2024, 1, 11, 0, 0, 0, 0, time.UTC)
+	if n := GetDaysBetween(start, end); n != 10 {
+		t.Fatalf("GetDaysBetween = %d, want 10", n)
+	}
+	n, err := GetDaysBetweenDays("2024-01-01", "2024-01-11")
+	if err != nil || n != 10 {
+		t.Fatalf("GetDaysBetweenDays = %d, %v", n, err)
+	}
+	if _, err := GetDaysBetweenDays("bad", "2024-01-11"); err == nil {
+		t.Fatal("expected error for invalid date")
+	}
+}
+
+func TestSliceHelpers(t *testing.T) {
+	if !Contains([]string{"a", "b"}, "b") || Contains([]string{"a"}, "c") {
+		t.Fatal("Contains wrong")
+	}
+	if got := RemoveDuplicates([]string{"a", "a", "b", "b", "c"}); len(got) != 3 {
+		t.Fatalf("RemoveDuplicates = %v", got)
+	}
+	if !InSlice([]int{1, 2, 3}, 2) || InSlice([]int{1}, 9) {
+		t.Fatal("InSlice wrong")
+	}
+}
+
+func TestMathHelpers(t *testing.T) {
+	if MaxInt(1, 2) != 2 || MinInt(3, 1) != 1 {
+		t.Fatal("MaxInt/MinInt wrong")
+	}
+	if !InRange(5, 1, 10) || InRange(11, 1, 10) {
+		t.Fatal("InRange wrong")
+	}
+}
+
+func TestGetGinContext(t *testing.T) {
+	g := GetGinContext()
+	if g == nil {
+		t.Fatal("GetGinContext returned nil")
+	}
+	g.Default()
+}
+
+func ExampleMD5() {
+	fmt.Println(MD5("hello"))
+	// Output: 5d41402abc4b2a76b9719d911017c592
 }

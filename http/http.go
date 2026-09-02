@@ -12,15 +12,22 @@ import (
 	"time"
 
 	"github.com/mysunshines/gocommon/constants"
+	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/middleware"
+	"github.com/mysunshines/gocommon/resilience"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client HTTP 客户端
 type Client struct {
-	client     *http.Client
-	baseURL    string
-	timeout    time.Duration
-	headers    map[string]string
-	middleware []Middleware
+	client         *http.Client      // 底层标准库 HTTP 客户端
+	baseURL        string            // 基础 URL，拼接到各请求路径前
+	timeout        time.Duration     // 请求超时
+	headers        map[string]string // 默认请求头（单次请求可覆盖）
+	middleware     []Middleware      // 请求发出前执行的中间件链
+	resilienceKey  string            // resilience 按此 key 区分熔断/限流；为空时取 baseURL 的 host
+	dumpBodies     bool              // 是否在 debug 日志中记录请求/响应体
 }
 
 // Middleware HTTP 中间件
@@ -28,12 +35,12 @@ type Middleware func(*http.Request) error
 
 // Config 客户端配置
 type Config struct {
-	BaseURL   string
-	Timeout   time.Duration
-	Headers   map[string]string
-	MaxIdle   int
-	MaxConns  int
-	KeepAlive time.Duration
+	BaseURL   string        // 基础 URL
+	Timeout   time.Duration // 超时时间
+	Headers   map[string]string // 默认请求头
+	MaxIdle   int           // 最大空闲连接数
+	MaxConns  int           // 最大连接数
+	KeepAlive time.Duration // 连接保活时间
 }
 
 // Option 配置选项
@@ -94,11 +101,27 @@ func WithMiddleware(m Middleware) Option {
 	}
 }
 
+// WithResilienceKey 设置 resilience 的 serviceKey，用于按下游区分超时/熔断/限流。
+// 不设置时默认取 baseURL 的 host 作为 key。与 resilience.SetPolicy(key, ...) 配套使用。
+func WithResilienceKey(key string) Option {
+	return func(c *Client) {
+		c.resilienceKey = key
+	}
+}
+
+// WithDumpBodies 开启后，debug 级别的请求/响应日志会附带 req_body 与 resp_body，
+// 便于排查 Consul 等服务发现的请求与响应内容。默认关闭，避免大响应体刷日志。
+func WithDumpBodies(enable bool) Option {
+	return func(c *Client) {
+		c.dumpBodies = enable
+	}
+}
+
 // Response HTTP 响应
 type Response struct {
-	StatusCode int
-	Headers    http.Header
-	Body       []byte
+	StatusCode int         // HTTP 状态码
+	Headers    http.Header // 响应头
+	Body       []byte      // 响应体原始字节
 }
 
 // buildURL 构建完整 URL
@@ -254,29 +277,109 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 	// 应用默认请求头
 	c.applyHeaders(req)
 
+	// 若开启 body 记录，先读取原始请求体（读完须重建 req.Body，因后续 Clone 仍需读取）。
+	var reqBody []byte
+	if c.dumpBodies && req.Body != nil {
+		reqBody, _ = io.ReadAll(req.Body)
+		req.Body = io.NopCloser(bytes.NewReader(reqBody))
+	}
+
 	// 执行中间件
 	if err := c.executeMiddleware(req); err != nil {
 		return nil, err
 	}
 
-	// 发送请求
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	// 选取 resilience serviceKey：显式 key 优先，否则取 baseURL 的 host。
+	key := c.resilienceKey
+	if key == "" && c.baseURL != "" {
+		if u, err := url.Parse(c.baseURL); err == nil {
+			key = u.Scheme + "://" + u.Host
+		} else {
+			key = c.baseURL
+		}
+	}
+	policy := resilience.ForService(key)
+	ctx := resilience.WithServiceKey(req.Context(), key)
+	traceID := middleware.GetTraceIDFromContext(req.Context())
+
+	// 用 resilience 包裹真正的网络请求：超时 + 限流 + 熔断 + 降级。
+	var resp *http.Response
+	start := time.Now()
+	execErr := policy.Execute(ctx, func(cctx context.Context) error {
+		// 将带超时的 context 注入请求，覆盖 client.Timeout（后者对读取也生效，二者取最短）。
+		r := req.Clone(cctx)
+		hr, err := c.client.Do(r)
+		if err != nil {
+			return err
+		}
+		resp = hr
+		return nil
+	}, nil)
+	if execErr != nil {
+		fields := logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  req.Method,
+			"url":                     req.URL.String(),
+			"duration":                time.Since(start).String(),
+			"err":                     execErr.Error(),
+		}
+		if c.dumpBodies {
+			fields["req_body"] = string(compactJSON(reqBody))
+		}
+		log.WithFields(fields).Errorf("[httpclient] request failed")
+		return nil, fmt.Errorf("request failed: %w", execErr)
 	}
 	defer resp.Body.Close()
 
 	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		fields := logrus.Fields{
+			constants.LogFieldTraceID: traceID,
+			"method":                  req.Method,
+			"url":                     req.URL.String(),
+			"status":                  resp.StatusCode,
+			"duration":                time.Since(start).String(),
+			"err":                     err.Error(),
+		}
+		if c.dumpBodies {
+			fields["req_body"] = string(compactJSON(reqBody))
+		}
+		log.WithFields(fields).Errorf("[httpclient] read response failed")
 		return nil, fmt.Errorf("read response failed: %w", err)
 	}
 
+	fields := logrus.Fields{
+		constants.LogFieldTraceID: traceID,
+		"method":                  req.Method,
+		"url":                     req.URL.String(),
+		"status":                  resp.StatusCode,
+		"duration":                time.Since(start).String(),
+	}
+	if c.dumpBodies {
+		fields["req_body"] = string(compactJSON(reqBody))
+		fields["resp_body"] = string(compactJSON(body))
+	}
+	if log.IsDebug() {
+		fields["ctx_kv"] = middleware.DumpContext(req.Context())
+	}
+	log.WithFields(fields).Debugf("[httpclient] request completed")
 	return &Response{
 		StatusCode: resp.StatusCode,
 		Headers:    resp.Header,
 		Body:       body,
 	}, nil
+}
+
+// compactJSON 将可能为 pretty-print 的 JSON 字节压缩成单行紧凑形式（仍是合法 JSON）。
+// 非 JSON 内容（解析失败）原样返回，避免破坏日志。用于把响应体记录进日志时
+// 去掉 Consul 等接口自带的缩进与换行，避免日志中出现大量转义 \n 噪声。
+func compactJSON(b []byte) []byte {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, b); err != nil {
+		return b
+	}
+	return buf.Bytes()
 }
 
 // Unmarshal 解析响应体为 JSON

@@ -8,17 +8,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Response 统一API响应结构
 type Response struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Code    int         `json:"code"`         // 业务码：0 表示成功，非 0 表示错误
+	Message string      `json:"message"`      // 提示信息
+	Data    interface{} `json:"data,omitempty"` // 业务数据（成功时返回，可为空）
 }
 
+// PageResult 分页结果
 type PageResult struct {
-	Total    int64       `json:"total"`
-	Page     int         `json:"page"`
-	PageSize int         `json:"page_size"`
-	Data     interface{} `json:"data"`
+	Total    int64       `json:"total"`    // 总记录数
+	Page     int         `json:"page"`     // 当前页
+	PageSize int         `json:"page_size"`// 每页大小
+	Data     interface{} `json:"data"`     // 当前页数据列表
 }
 
 func Success(c *gin.Context, data interface{}) {
@@ -84,6 +86,11 @@ func InternalServerError(c *gin.Context, message string) {
 	ErrorWithStatus(c, http.StatusInternalServerError, constants.ErrCodeInternal, message)
 }
 
+// Fail 统一返回 500 及错误详情，便于 handler 中直接透传 err（兼容既有调用约定）。
+func Fail(c *gin.Context, err error) {
+	InternalServerError(c, err.Error())
+}
+
 func TooManyRequests(c *gin.Context, message string) {
 	ErrorWithStatus(c, http.StatusTooManyRequests, constants.ErrCodeRateLimited, message)
 }
@@ -92,42 +99,6 @@ func ParamError(c *gin.Context, message string) {
 	ErrorWithStatus(c, http.StatusBadRequest, constants.ErrCodeBadRequest, message)
 }
 
-func UserNotFound(c *gin.Context) {
-	Error(c, constants.ErrCodeUserNotFound, "User not found")
-}
-
-func ArticleNotFound(c *gin.Context) {
-	Error(c, constants.ErrCodeArticleNotFound, "Article not found")
-}
-
-func CommentNotFound(c *gin.Context) {
-	Error(c, constants.ErrCodeCommentNotFound, "Comment not found")
-}
-
-func PasswordIncorrect(c *gin.Context) {
-	Error(c, constants.ErrCodePasswordIncorrect, "Password incorrect")
-}
-
-func UserExists(c *gin.Context) {
-	Error(c, constants.ErrCodeUserExists, "User already exists")
-}
-
-func InvalidToken(c *gin.Context) {
-	Error(c, constants.ErrCodeTokenInvalid, "Invalid token")
-}
-
-func TokenExpired(c *gin.Context) {
-	Error(c, constants.ErrCodeTokenExpired, "Token expired")
-}
-
 func PermissionDenied(c *gin.Context) {
 	Error(c, constants.ErrCodeForbidden, "Permission denied")
-}
-
-func CommentDisabled(c *gin.Context) {
-	Error(c, constants.ErrCodeCommentDisabled, "Comment is disabled for this article")
-}
-
-func InBlacklist(c *gin.Context) {
-	Error(c, constants.ErrCodeCommentBlacklist, "You are in blacklist")
 }
