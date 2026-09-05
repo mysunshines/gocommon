@@ -17,6 +17,7 @@ import (
 // UserIDKey 用于标准 context.Context 存储 user_id（跨 goroutine / 下游组件传递）。
 type contextKey string
 
+// UserIDKey 是注入到标准 context.Context 中的用户 ID 键，供下游组件跨层读取。
 const UserIDKey contextKey = "user_id"
 
 // UserIDContextKey 用于 gin.Context.Set/Get 的 string 键

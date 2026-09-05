@@ -19,9 +19,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	logrus "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
-	logrus "github.com/sirupsen/logrus"
 )
 
 // bodyCaptureWriter 在 debug 级别下包装 gin.ResponseWriter，截获响应体以便记录日志。
@@ -53,6 +53,7 @@ func InitJWT(secret string) {
 	})
 }
 
+// RateLimitMiddleware 基于按路由+身份（登录用户 / 客户端 IP）的令牌桶限流，超限返回 429。
 func RateLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if rateLimiter == nil {
@@ -79,6 +80,7 @@ func RateLimitMiddleware() gin.HandlerFunc {
 	}
 }
 
+// MetricsMiddleware 记录每个请求的核心指标（在途请求数、耗时、状态码、方法），请求结束后上报。
 func MetricsMiddleware(service string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		metrics.IncrementInFlight()
@@ -92,6 +94,7 @@ func MetricsMiddleware(service string) gin.HandlerFunc {
 	}
 }
 
+// LoggingMiddleware 记录 HTTP 访问日志；debug 级别下额外捕获并打印请求体与响应体明细。
 func LoggingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -162,6 +165,7 @@ func LoggingMiddleware() gin.HandlerFunc {
 	}
 }
 
+// RecoveryMiddleware 捕获 handler 中的 panic，上报指标并返回 500，避免进程崩溃。
 func RecoveryMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
@@ -415,6 +419,7 @@ func AdminOnlyMiddleware() gin.HandlerFunc {
 	}
 }
 
+// ContextMiddleware 将 gin.Context 中的 userID 注入到 request.Context，便于下游组件读取。
 func ContextMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -432,6 +437,7 @@ func ContextMiddleware() gin.HandlerFunc {
 	}
 }
 
+// TimeoutMiddleware 为请求注入指定时长的 context 超时，超时后自动取消。
 func TimeoutMiddleware(timeout time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
@@ -454,6 +460,7 @@ func TimeoutMiddlewareDefault() gin.HandlerFunc {
 	}
 }
 
+// ValidateRequestMiddleware 限制 POST/PUT/PATCH 请求体大小（MaxRequestBody），防止超大请求耗尽资源。
 func ValidateRequestMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodPost || c.Request.Method == http.MethodPut || c.Request.Method == http.MethodPatch {

@@ -41,11 +41,11 @@ func NewRateLimiter(rps int, burst int) *RateLimiter {
 // NewRateLimiterWithRules 创建带路由级规则的限流器。
 func NewRateLimiterWithRules(rps int, burst int, rules []config.RateLimitRule) *RateLimiter {
 	rl := &RateLimiter{
-		limiters:      make(map[string]*rate.Limiter),
-		rps:           rate.Limit(rps),
-		burst:         burst,
-		rules:         rules,
-		ruleLimiters:  make([]*RateLimiter, len(rules)),
+		limiters:     make(map[string]*rate.Limiter),
+		rps:          rate.Limit(rps),
+		burst:        burst,
+		rules:        rules,
+		ruleLimiters: make([]*RateLimiter, len(rules)),
 	}
 	for i := range rules {
 		rl.ruleLimiters[i] = NewRateLimiter(rules[i].QPS, rules[i].Burst)
@@ -62,6 +62,7 @@ func (rl *RateLimiter) getLimiterLocked(key string) *rate.Limiter {
 	return limiter
 }
 
+// GetLimiter 返回指定 key 对应的令牌桶限流器（按需惰性创建）。
 func (rl *RateLimiter) GetLimiter(key string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -109,6 +110,7 @@ var (
 	limiterOnce sync.Once
 )
 
+// InitRateLimiter 按配置初始化全局限流器；未启用或已初始化则跳过。
 func InitRateLimiter(cfg *config.RateLimitConfig) {
 	limiterOnce.Do(func() {
 		if cfg.Enabled {

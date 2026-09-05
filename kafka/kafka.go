@@ -23,11 +23,11 @@ type Producer struct {
 
 // Consumer Kafka 消费者
 type Consumer struct {
-	reader   *kafka.Reader   // Kafka 读取器
+	reader   *kafka.Reader    // Kafka 读取器
 	handlers []MessageHandler // 消息处理器列表
-	mu       sync.RWMutex    // 保护 handlers/running 并发读写
-	running  bool            // 消费循环是否正在运行
-	stopCh   chan struct{}   // 停止信号，关闭后退出消费循环
+	mu       sync.RWMutex     // 保护 handlers/running 并发读写
+	running  bool             // 消费循环是否正在运行
+	stopCh   chan struct{}    // 停止信号，关闭后退出消费循环
 }
 
 // MessageHandler 消息处理函数

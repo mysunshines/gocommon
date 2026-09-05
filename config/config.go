@@ -13,22 +13,22 @@ var cfg *Config
 
 // Config 通用配置结构，各服务通过类型别名复用
 type Config struct {
-	App       AppConfig       `yaml:"app"`        // 应用基础配置（名称/环境/日志/监听）
-	Database  DatabaseConfig  `yaml:"database"`   // 数据库连接配置
-	Redis     RedisConfig     `yaml:"redis"`      // Redis 缓存配置
-	JWT       JWTConfig       `yaml:"jwt"`        // JWT 鉴权配置
-	GRPC      GRPCConfig      `yaml:"grpc"`       // gRPC 监听配置
-	HTTP      HTTPConfig      `yaml:"http"`       // HTTP 监听配置
-	Consul    ConsulConfig    `yaml:"consul"`     // Consul 注册中心配置
-	Micro     MicroConfig     `yaml:"micro"`      // 微服务（注册中心）配置
-	Metrics   MetricsConfig   `yaml:"metrics"`    // Prometheus 指标暴露配置
-	RateLimit RateLimitConfig `yaml:"rate_limit"` // 限流配置
-	Server    ServerConfig    `yaml:"server"`     // 入站 server 调优（gRPC/HTTP 超时与 keepalive）
+	App       AppConfig       `yaml:"app"`            // 应用基础配置（名称/环境/日志/监听）
+	Database  DatabaseConfig  `yaml:"database"`       // 数据库连接配置
+	Redis     RedisConfig     `yaml:"redis"`          // Redis 缓存配置
+	JWT       JWTConfig       `yaml:"jwt"`            // JWT 鉴权配置
+	GRPC      GRPCConfig      `yaml:"grpc"`           // gRPC 监听配置
+	HTTP      HTTPConfig      `yaml:"http"`           // HTTP 监听配置
+	Consul    ConsulConfig    `yaml:"consul"`         // Consul 注册中心配置
+	Micro     MicroConfig     `yaml:"micro"`          // 微服务（注册中心）配置
+	Metrics   MetricsConfig   `yaml:"metrics"`        // Prometheus 指标暴露配置
+	RateLimit RateLimitConfig `yaml:"rate_limit"`     // 限流配置
+	Server    ServerConfig    `yaml:"server"`         // 入站 server 调优（gRPC/HTTP 超时与 keepalive）
 	CORS      CORSConfig      `yaml:"cors,omitempty"` // CORS 跨域配置（article 等需要 HTTP 直连的服务）
 	Mail      MailConfig      `yaml:"mail,omitempty"` // 邮件配置（user 等需要发信的服务）
-	MinIO     MinIOConfig     `yaml:"minio"`      // 对象存储配置（文件上传统一落 MinIO）
-	Loki      LokiConfig      `yaml:"loki"`       // Loki 集中日志（想法 3 · 方案 A）
-	OTel      OTelConfig      `yaml:"otel"`       // OpenTelemetry 链路追踪（想法 3 · 方案 B）
+	MinIO     MinIOConfig     `yaml:"minio"`          // 对象存储配置（文件上传统一落 MinIO）
+	Loki      LokiConfig      `yaml:"loki"`           // Loki 集中日志（想法 3 · 方案 A）
+	OTel      OTelConfig      `yaml:"otel"`           // OpenTelemetry 链路追踪（想法 3 · 方案 B）
 }
 
 // LokiConfig Loki 集中日志配置（想法 3 · 方案 A）。
@@ -43,23 +43,24 @@ type LokiConfig struct {
 // OTLP 导出器默认走 otel-collector（再由 collector 转发到 Tempo/Jaeger）。
 // Endpoint 为空 / 不配置时降级：不采集 trace，但 TraceID 取数逻辑仍可用。
 type OTelConfig struct {
-	Enabled  bool   `yaml:"enabled"`   // 是否启用 trace 采集
-	Endpoint string `yaml:"endpoint"`  // otel-collector gRPC 地址，如 otel-collector:4317
+	Enabled  bool   `yaml:"enabled"`  // 是否启用 trace 采集
+	Endpoint string `yaml:"endpoint"` // otel-collector gRPC 地址，如 otel-collector:4317
 }
 
 // MinIOConfig 对象存储（MinIO / S3 兼容）配置。
 // 网关接收文件上传后存入 MinIO 并返回公共读 URL；下游服务不再各自落本地盘。
 type MinIOConfig struct {
-	Enabled         bool   `yaml:"enabled"`          // 是否启用对象存储（网关上传需开启）
-	Endpoint        string `yaml:"endpoint"`         // MinIO API 地址，如 "minio:9000"
-	AccessKeyID     string `yaml:"access_key_id"`    // 访问 Key
-	SecretAccessKey string `yaml:"secret_access_key"`// 访问 Secret
-	Bucket          string `yaml:"bucket"`           // 存储桶名，如 "blog"
-	UseSSL          bool   `yaml:"use_ssl"`          // 是否 HTTPS
-	PublicBaseURL   string `yaml:"public_base_url"`  // 文件对外可访问基础 URL（不含末尾斜杠）
-	AutoCreateBucket bool  `yaml:"auto_create_bucket"` // 初始化时自动创建不存在的 bucket（公共读）
+	Enabled          bool   `yaml:"enabled"`            // 是否启用对象存储（网关上传需开启）
+	Endpoint         string `yaml:"endpoint"`           // MinIO API 地址，如 "minio:9000"
+	AccessKeyID      string `yaml:"access_key_id"`      // 访问 Key
+	SecretAccessKey  string `yaml:"secret_access_key"`  // 访问 Secret
+	Bucket           string `yaml:"bucket"`             // 存储桶名，如 "blog"
+	UseSSL           bool   `yaml:"use_ssl"`            // 是否 HTTPS
+	PublicBaseURL    string `yaml:"public_base_url"`    // 文件对外可访问基础 URL（不含末尾斜杠）
+	AutoCreateBucket bool   `yaml:"auto_create_bucket"` // 初始化时自动创建不存在的 bucket（公共读）
 }
 
+// AppConfig 应用基础配置（服务名/运行环境/日志级别/HTTP 监听）。
 type AppConfig struct {
 	Name      string `yaml:"name"`       // 服务名（用于日志/标识）
 	Env       string `yaml:"env"`        // 运行环境：development / production
@@ -82,16 +83,17 @@ func (a *AppConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", host, a.Port)
 }
 
+// DatabaseConfig 数据库连接配置（MySQL 主机/账号/连接池与慢查询阈值）。
 type DatabaseConfig struct {
-	Host            string `yaml:"host"`             // 数据库主机
-	Port            int    `yaml:"port"`             // 数据库端口
-	User            string `yaml:"user"`             // 用户名
-	Password        string `yaml:"password"`         // 密码
-	Name            string `yaml:"name"`             // 数据库名
-	MaxOpenConns    int    `yaml:"max_open_conns"`   // 最大打开连接数
-	MaxIdleConns    int    `yaml:"max_idle_conns"`   // 最大空闲连接数
-	ConnMaxLifetime int    `yaml:"conn_max_lifetime"`// 连接最大存活时间（秒）
-	SlowThreshold   int    `yaml:"slow_threshold"`   // 慢查询阈值（毫秒）
+	Host            string `yaml:"host"`              // 数据库主机
+	Port            int    `yaml:"port"`              // 数据库端口
+	User            string `yaml:"user"`              // 用户名
+	Password        string `yaml:"password"`          // 密码
+	Name            string `yaml:"name"`              // 数据库名
+	MaxOpenConns    int    `yaml:"max_open_conns"`    // 最大打开连接数
+	MaxIdleConns    int    `yaml:"max_idle_conns"`    // 最大空闲连接数
+	ConnMaxLifetime int    `yaml:"conn_max_lifetime"` // 连接最大存活时间（秒）
+	SlowThreshold   int    `yaml:"slow_threshold"`    // 慢查询阈值（毫秒）
 }
 
 // DSN 返回 MySQL 连接字符串
@@ -100,6 +102,7 @@ func (d *DatabaseConfig) DSN() string {
 		d.User, d.Password, d.Host, d.Port, d.Name)
 }
 
+// RedisConfig Redis 缓存配置（主机/密码/连接池/键前缀）。
 type RedisConfig struct {
 	Host      string `yaml:"host"`       // Redis 主机
 	Port      int    `yaml:"port"`       // Redis 端口
@@ -114,11 +117,13 @@ func (r *RedisConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
 }
 
+// JWTConfig JWT 鉴权配置（签名密钥与令牌过期时间）。
 type JWTConfig struct {
 	Secret     string `yaml:"secret"`
 	ExpireTime int    `yaml:"expire_time"`
 }
 
+// GRPCConfig gRPC 服务监听配置（主机与端口）。
 type GRPCConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
@@ -129,6 +134,7 @@ func (g *GRPCConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", g.Host, g.Port)
 }
 
+// HTTPConfig HTTP 服务监听配置（主机与端口）。
 type HTTPConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
@@ -139,6 +145,7 @@ func (h *HTTPConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", h.Host, h.Port)
 }
 
+// ConsulConfig Consul 注册中心配置（地址与健康检查参数）。
 type ConsulConfig struct {
 	Address            string `yaml:"address"`
 	CheckInterval      int    `yaml:"check_interval"`
@@ -158,12 +165,14 @@ type RegistryConfig struct {
 	Options map[string]string `yaml:"options"` // 扩展选项
 }
 
+// MetricsConfig Prometheus 指标暴露配置（开关/端口/路径）。
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"` // 是否启用指标暴露
 	Port    int    `yaml:"port"`    // 指标 HTTP 端口
 	Path    string `yaml:"path"`    // 指标路径（默认 /metrics）
 }
 
+// RateLimitConfig 限流配置（全局 QPS/Burst 与路由级限流规则）。
 type RateLimitConfig struct {
 	Enabled bool `yaml:"enabled"` // 是否启用限流
 	QPS     int  `yaml:"qps"`     // 全局默认每秒允许请求数（速率），作为无规则匹配时的兜底
@@ -180,8 +189,8 @@ type RateLimitConfig struct {
 //   - QPS/Burst：本规则使用的速率与突发容量。
 type RateLimitRule struct {
 	MatchPaths []string `yaml:"paths"` // 需要匹配的路径前缀（任一命中即生效）
-	QPS        int      `yaml:"qps"`    // 该规则每秒允许请求数
-	Burst      int      `yaml:"burst"`  // 该规则突发容量
+	QPS        int      `yaml:"qps"`   // 该规则每秒允许请求数
+	Burst      int      `yaml:"burst"` // 该规则突发容量
 }
 
 // CORSConfig 跨域资源共享配置（HTTP 直连调试 / Web 前端调用时需要）。
@@ -290,14 +299,14 @@ type ServerConfig struct {
 
 // GRPCInboundConfig gRPC server 端入站配置（秒为单位；MaxConcurrentStreams 为个数）。
 type GRPCInboundConfig struct {
-	DefaultTimeoutSec     int      `yaml:"default_timeout_sec"`      // 默认入站请求超时（秒）
-	SlowMethods           []string `yaml:"slow_methods"`            // 需放大超时的方法名后缀（如 ListComments）
-	SlowMultiplier        float64  `yaml:"slow_multiplier"`         // 慢方法超时放大倍数（默认 2）
-	MaxConnectionIdle     int      `yaml:"max_connection_idle_sec"` // keepalive: 空闲连接回收（秒）
-	MaxConnectionAge      int      `yaml:"max_connection_age_sec"`  // keepalive: 连接最大寿命（秒）
+	DefaultTimeoutSec     int      `yaml:"default_timeout_sec"`          // 默认入站请求超时（秒）
+	SlowMethods           []string `yaml:"slow_methods"`                 // 需放大超时的方法名后缀（如 ListComments）
+	SlowMultiplier        float64  `yaml:"slow_multiplier"`              // 慢方法超时放大倍数（默认 2）
+	MaxConnectionIdle     int      `yaml:"max_connection_idle_sec"`      // keepalive: 空闲连接回收（秒）
+	MaxConnectionAge      int      `yaml:"max_connection_age_sec"`       // keepalive: 连接最大寿命（秒）
 	MaxConnectionAgeGrace int      `yaml:"max_connection_age_grace_sec"` // keepalive: 寿命宽限（秒）
-	MinPingInterval       int      `yaml:"min_ping_interval_sec"`   // keepalive: 客户端最小 ping 间隔（秒）
-	MaxConcurrentStreams  uint32   `yaml:"max_concurrent_streams"`  // 最大并发流（仅启动期）
+	MinPingInterval       int      `yaml:"min_ping_interval_sec"`        // keepalive: 客户端最小 ping 间隔（秒）
+	MaxConcurrentStreams  uint32   `yaml:"max_concurrent_streams"`       // 最大并发流（仅启动期）
 }
 
 // HTTPInboundConfig HTTP server 端入站超时配置（秒为单位）。
@@ -506,5 +515,3 @@ func ApplyEnvOverrides(c *Config) {
 		c.MinIO.AutoCreateBucket = v == "true" || v == "1"
 	}
 }
-
-

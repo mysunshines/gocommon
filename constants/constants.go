@@ -251,6 +251,7 @@ const (
 //	grpcclient.RegisterService(constants.UserServiceV2Alias, constants.UserServiceV2Service, addr) // 同地址或不同部署均可
 //	grpcclient.SendRequest(ctx, constants.UserServiceV1Alias+".IsInBlacklist", ...)
 //	grpcclient.SendRequest(ctx, constants.UserServiceV2Alias+".SomeNewMethod", ...)
+//
 // ============================================================================
 const (
 	// UserServiceV1Alias 用户服务 v1 的调用侧逻辑名（SendRequest api 前缀）
@@ -541,6 +542,7 @@ const (
 //   - HTTP 层：头名 "Authorization" 按 HTTP 规范大小写不敏感，gin 的 GetHeader
 //     内部已做 CanonicalMIMEHeaderKey 规范化，调用方传任意大小写均可；
 //   - gRPC 层：metadata key "authorization" 区分大小写且约定必须小写。
+//
 // 两者语义同源（都承载 Bearer Token），但分属不同协议层，故分别定义常量。
 // ============================================================================
 const (

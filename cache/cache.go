@@ -24,16 +24,17 @@ const (
 )
 
 var (
-	rdb        *redis.Client
-	initOnce   sync.Once
-	sfGroup    singleflight.Group
+	rdb      *redis.Client
+	initOnce sync.Once
+	sfGroup  singleflight.Group
 	// keyPrefix 在 Init 时从配置写入，避免 GetKey 依赖 gocommon 全局配置
 	// （各服务用各自的 internal/config 加载，gocommon 的 config.Get() 可能为 nil）
-	keyPrefix  string
+	keyPrefix string
 	// 多实例安全：TTL 从 10 分钟缩短到 30 秒，配合 Redis pub/sub 主动失效
 	localCache = NewLocalCache(1000, 30*time.Second)
 )
 
+// RedisConfig 定义 Redis 客户端初始化所需的连接配置（地址、密码、库号、连接池、键前缀）。
 type RedisConfig struct {
 	Host      string // Redis 主机
 	Port      int    // Redis 端口
@@ -43,6 +44,7 @@ type RedisConfig struct {
 	KeyPrefix string // 键前缀（避免多服务键冲突）
 }
 
+// Init 初始化全局 Redis 客户端（仅执行一次），校验连通性并启动跨实例缓存失效监听。
 func Init(cfg *config.RedisConfig) error {
 	var initErr error
 	initOnce.Do(func() {
@@ -73,10 +75,10 @@ func Init(cfg *config.RedisConfig) error {
 		// 启动跨实例本地缓存失效监听
 		go startCacheInvalidationListener()
 
-// 明确标记多实例缓存失效通道已就绪：这是「多实例状态一致性」的关键保障。
-// LocalCacheDelete 会通过 Redis pub/sub 广播失效，其他实例监听后删除本地旧值，
-// 从而保证多实例最终一致（配合 localCache 30s TTL 兜底）。
-log.Info("Redis initialized; multi-instance local-cache invalidation (pub/sub) is ACTIVE")
+		// 明确标记多实例缓存失效通道已就绪：这是「多实例状态一致性」的关键保障。
+		// LocalCacheDelete 会通过 Redis pub/sub 广播失效，其他实例监听后删除本地旧值，
+		// 从而保证多实例最终一致（配合 localCache 30s TTL 兜底）。
+		log.Info("Redis initialized; multi-instance local-cache invalidation (pub/sub) is ACTIVE")
 	})
 	return initErr
 }
@@ -87,6 +89,7 @@ func InvalidationActive() bool {
 	return redisReady()
 }
 
+// GetClient 返回已初始化的全局 Redis 客户端实例。
 func GetClient() *redis.Client {
 	return rdb
 }
@@ -99,6 +102,7 @@ func Ping(ctx context.Context) error {
 	return rdb.Ping(ctx).Err()
 }
 
+// GetKey 返回拼接全局键前缀后的完整 Redis 键名。
 func GetKey(key string) string {
 	return keyPrefix + key
 }
@@ -151,6 +155,7 @@ func SetNX(ctx context.Context, key string, value interface{}, expiration time.D
 	return ok, err
 }
 
+// Get 获取字符串值；key 不存在返回 redis.Nil（不视为错误）并上报命中统计。
 func Get(ctx context.Context, key string) (string, error) {
 	if !redisReady() {
 		return "", fmt.Errorf("redis not initialized")
@@ -167,6 +172,7 @@ func Get(ctx context.Context, key string) (string, error) {
 	return val, err
 }
 
+// GetBytes 获取值并以字节切片返回，适用于原始二进制数据。
 func GetBytes(ctx context.Context, key string) ([]byte, error) {
 	b, err := rdb.Get(ctx, GetKey(key)).Bytes()
 	if err != nil && err != redis.Nil {
@@ -177,6 +183,7 @@ func GetBytes(ctx context.Context, key string) ([]byte, error) {
 	return b, err
 }
 
+// Delete 删除一个或多个 key（自动拼接键前缀）。
 func Delete(ctx context.Context, keys ...string) error {
 	realKeys := make([]string, len(keys))
 	for i, k := range keys {
@@ -189,6 +196,7 @@ func Delete(ctx context.Context, keys ...string) error {
 	return err
 }
 
+// Exists 判断指定 key 是否存在。
 func Exists(ctx context.Context, key string) (bool, error) {
 	if !redisReady() {
 		return false, fmt.Errorf("redis not initialized")
@@ -198,6 +206,7 @@ func Exists(ctx context.Context, key string) (bool, error) {
 	return n > 0, err
 }
 
+// Incr 将 key 存储的整数原子自增 1，返回自增后的值。
 func Incr(ctx context.Context, key string) (int64, error) {
 	val, err := rdb.Incr(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "INCR", key, err)
@@ -213,6 +222,7 @@ func Expire(ctx context.Context, key string, expiration time.Duration) error {
 	return err
 }
 
+// TTL 返回 key 的剩余生存时间。
 func TTL(ctx context.Context, key string) (time.Duration, error) {
 	d, err := rdb.TTL(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "TTL", key, err)
@@ -226,6 +236,7 @@ func IncrBy(ctx context.Context, key string, value int64) (int64, error) {
 	return val, err
 }
 
+// Decr 将 key 存储的整数原子自减 1，返回自减后的值。
 func Decr(ctx context.Context, key string) (int64, error) {
 	val, err := rdb.Decr(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "DECR", key, err)
@@ -252,36 +263,42 @@ func MSet(ctx context.Context, values ...interface{}) error {
 
 // ---- List 命令 ----
 
+// LPush 将一个或多个值从左侧（表头）推入列表，返回列表长度。
 func LPush(ctx context.Context, key string, values ...interface{}) (int64, error) {
 	val, err := rdb.LPush(ctx, GetKey(key), values...).Result()
 	logRedisOp(ctx, "LPUSH", key, err)
 	return val, err
 }
 
+// RPush 将一个或多个值从右侧（表尾）推入列表，返回列表长度。
 func RPush(ctx context.Context, key string, values ...interface{}) (int64, error) {
 	val, err := rdb.RPush(ctx, GetKey(key), values...).Result()
 	logRedisOp(ctx, "RPUSH", key, err)
 	return val, err
 }
 
+// LPop 弹出并返回列表左侧（表头）第一个元素。
 func LPop(ctx context.Context, key string) (string, error) {
 	val, err := rdb.LPop(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "LPOP", key, err)
 	return val, err
 }
 
+// RPop 弹出并返回列表右侧（表尾）最后一个元素。
 func RPop(ctx context.Context, key string) (string, error) {
 	val, err := rdb.RPop(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "RPOP", key, err)
 	return val, err
 }
 
+// LRange 返回列表下标范围 [start, stop] 内的元素（含两端）。
 func LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
 	val, err := rdb.LRange(ctx, GetKey(key), start, stop).Result()
 	logRedisOp(ctx, "LRANGE", key, err)
 	return val, err
 }
 
+// LLen 返回列表的元素个数。
 func LLen(ctx context.Context, key string) (int64, error) {
 	val, err := rdb.LLen(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "LLEN", key, err)
@@ -297,36 +314,42 @@ func LTrim(ctx context.Context, key string, start, stop int64) error {
 
 // ---- Hash 命令 ----
 
+// HSet 为哈希字段赋值，返回新增字段个数。
 func HSet(ctx context.Context, key string, values ...interface{}) (int64, error) {
 	val, err := rdb.HSet(ctx, GetKey(key), values...).Result()
 	logRedisOp(ctx, "HSET", key, err)
 	return val, err
 }
 
+// HGet 返回哈希表中指定字段的值。
 func HGet(ctx context.Context, key, field string) (string, error) {
 	val, err := rdb.HGet(ctx, GetKey(key), field).Result()
 	logRedisOp(ctx, "HGET", key, err)
 	return val, err
 }
 
+// HGetAll 返回哈希表中所有字段及其值。
 func HGetAll(ctx context.Context, key string) (map[string]string, error) {
 	val, err := rdb.HGetAll(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "HGETALL", key, err)
 	return val, err
 }
 
+// HDel 删除哈希表中的一个或多个字段，返回成功删除个数。
 func HDel(ctx context.Context, key string, fields ...string) (int64, error) {
 	val, err := rdb.HDel(ctx, GetKey(key), fields...).Result()
 	logRedisOp(ctx, "HDEL", key, err)
 	return val, err
 }
 
+// HExists 判断哈希表中是否存在指定字段。
 func HExists(ctx context.Context, key, field string) (bool, error) {
 	val, err := rdb.HExists(ctx, GetKey(key), field).Result()
 	logRedisOp(ctx, "HEXISTS", key, err)
 	return val, err
 }
 
+// HIncrBy 将哈希字段的整数值按步长自增，返回自增后的值。
 func HIncrBy(ctx context.Context, key, field string, incr int64) (int64, error) {
 	val, err := rdb.HIncrBy(ctx, GetKey(key), field, incr).Result()
 	logRedisOp(ctx, "HINCRBY", key, err)
@@ -335,30 +358,35 @@ func HIncrBy(ctx context.Context, key, field string, incr int64) (int64, error) 
 
 // ---- Set 命令 ----
 
+// SAdd 向集合添加一个或多个成员，返回新增成员个数。
 func SAdd(ctx context.Context, key string, members ...interface{}) (int64, error) {
 	val, err := rdb.SAdd(ctx, GetKey(key), members...).Result()
 	logRedisOp(ctx, "SADD", key, err)
 	return val, err
 }
 
+// SRem 从集合移除一个或多个成员，返回成功移除个数。
 func SRem(ctx context.Context, key string, members ...interface{}) (int64, error) {
 	val, err := rdb.SRem(ctx, GetKey(key), members...).Result()
 	logRedisOp(ctx, "SREM", key, err)
 	return val, err
 }
 
+// SIsMember 判断成员是否属于该集合。
 func SIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
 	val, err := rdb.SIsMember(ctx, GetKey(key), member).Result()
 	logRedisOp(ctx, "SISMEMBER", key, err)
 	return val, err
 }
 
+// SMembers 返回集合中的所有成员。
 func SMembers(ctx context.Context, key string) ([]string, error) {
 	val, err := rdb.SMembers(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "SMEMBERS", key, err)
 	return val, err
 }
 
+// SCard 返回集合的成员个数。
 func SCard(ctx context.Context, key string) (int64, error) {
 	val, err := rdb.SCard(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "SCARD", key, err)
@@ -367,50 +395,59 @@ func SCard(ctx context.Context, key string) (int64, error) {
 
 // ---- Sorted Set 命令 ----
 
+// Z 表示有序集合元素，包含成员值与排序分值 score（等价于 go-redis 的 redis.Z）。
 type Z = redis.Z
 
+// ZAdd 向有序集合添加一个或多个带分值的成员，返回新增成员个数。
 func ZAdd(ctx context.Context, key string, members ...*redis.Z) (int64, error) {
 	val, err := rdb.ZAdd(ctx, GetKey(key), members...).Result()
 	logRedisOp(ctx, "ZADD", key, err)
 	return val, err
 }
 
+// ZRem 从有序集合移除一个或多个成员，返回成功移除个数。
 func ZRem(ctx context.Context, key string, members ...interface{}) (int64, error) {
 	val, err := rdb.ZRem(ctx, GetKey(key), members...).Result()
 	logRedisOp(ctx, "ZREM", key, err)
 	return val, err
 }
 
+// ZRemRangeByScore 移除有序集合中分值落在 [min, max] 范围内的所有成员。
 func ZRemRangeByScore(ctx context.Context, key string, min, max string) (int64, error) {
 	val, err := rdb.ZRemRangeByScore(ctx, GetKey(key), min, max).Result()
 	logRedisOp(ctx, "ZREMRANGEBYSCORE", key, err)
 	return val, err
 }
 
+// ZRange 按分值升序返回有序集合下标范围 [start, stop] 内的成员。
 func ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
 	val, err := rdb.ZRange(ctx, GetKey(key), start, stop).Result()
 	logRedisOp(ctx, "ZRANGE", key, err)
 	return val, err
 }
 
+// ZRangeWithScores 按分值升序返回指定范围成员及其分值。
 func ZRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
 	val, err := rdb.ZRangeWithScores(ctx, GetKey(key), start, stop).Result()
 	logRedisOp(ctx, "ZRANGEWITHSCORES", key, err)
 	return val, err
 }
 
+// ZRevRange 按分值降序返回有序集合下标范围 [start, stop] 内的成员。
 func ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
 	val, err := rdb.ZRevRange(ctx, GetKey(key), start, stop).Result()
 	logRedisOp(ctx, "ZREVRANGE", key, err)
 	return val, err
 }
 
+// ZRevRangeWithScores 按分值降序返回指定范围成员及其分值。
 func ZRevRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
 	val, err := rdb.ZRevRangeWithScores(ctx, GetKey(key), start, stop).Result()
 	logRedisOp(ctx, "ZREVRANGEWITHSCORES", key, err)
 	return val, err
 }
 
+// ZCard 返回有序集合的成员个数。
 func ZCard(ctx context.Context, key string) (int64, error) {
 	val, err := rdb.ZCard(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "ZCARD", key, err)
@@ -450,6 +487,7 @@ func RenewLock(ctx context.Context, lockKey string, instanceID string, ttl time.
 	return rdb.Eval(ctx, script, []string{GetKey(lockKey)}, instanceID, int(ttl.Seconds())).Err()
 }
 
+// Close 关闭全局 Redis 客户端连接，未初始化时安全返回。
 func Close() error {
 	if rdb != nil {
 		return rdb.Close()
@@ -494,6 +532,7 @@ func startCacheInvalidationListener() {
 //   - bloomHashIncrement：双哈希步长。只需算一次主哈希 fp，第 i 个哈希位
 //     = (fp + i*increment) % size；0x5bd1e995 是与 2^32 互质的奇数
 //     （MurmurHash 黄金比例乘数），保证 i 个哈希位均匀铺满位空间、不聚集。
+//
 // 用法约束：Add 与 Exists 必须使用完全相同的 seed/increment，
 // 否则同一 value 算出的位集合不一致，会出现「已加入的元素查不到」。
 const (
@@ -501,12 +540,14 @@ const (
 	bloomHashIncrement = 0x5bd1e995
 )
 
+// BloomFilter 是基于 Redis bitmap 的布隆过滤器，用于判断元素「可能存在/一定不存在」。
 type BloomFilter struct {
 	key    string // Redis 中位数组键名（已带 KeyPrefix）
 	size   uint64 // 位数组大小（bit 数）
 	hashes uint64 // 哈希函数个数
 }
 
+// NewBloomFilter 创建布隆过滤器，需指定键名、位数组大小与哈希函数个数。
 func NewBloomFilter(key string, size, hashes uint64) *BloomFilter {
 	return &BloomFilter{
 		key:    GetKey(key),
@@ -515,6 +556,7 @@ func NewBloomFilter(key string, size, hashes uint64) *BloomFilter {
 	}
 }
 
+// Add 通过双哈希将 value 映射到多个位并置位，标记其可能存在。
 func (bf *BloomFilter) Add(ctx context.Context, value string) error {
 	pipe := rdb.Pipeline()
 	// 主哈希 + 双哈希增量生成 hashes 个位，seed/increment 见 bloomHashSeed/bloomHashIncrement
@@ -546,6 +588,7 @@ func (bf *BloomFilter) AddBulk(ctx context.Context, values []string) error {
 	return err
 }
 
+// Exists 检查 value 对应的多个位是否均置位，全命中返回 true（可能误判）。
 func (bf *BloomFilter) Exists(ctx context.Context, value string) (bool, error) {
 	// 与 Add 使用完全相同的 seed/increment，保证对同一 value 算出的位一致
 	fp := murmur3.SeedSum64(bloomHashSeed, []byte(value))
@@ -561,16 +604,19 @@ func (bf *BloomFilter) Exists(ctx context.Context, value string) (bool, error) {
 	return true, nil
 }
 
+// SingleFlightDo 合并相同 key 的并发调用为一次执行，避免缓存击穿。
 func SingleFlightDo(key string, fn func() (interface{}, error)) (interface{}, error) {
 	v, err, _ := sfGroup.Do(key, fn)
 	return v, err
 }
 
+// SingleFlightDoChan 同 SingleFlightDo，但立即返回结果通道以便异步等待。
 func SingleFlightDoChan(key string, fn func() (interface{}, error)) <-chan singleflight.Result {
 	ch := sfGroup.DoChan(key, fn)
 	return ch
 }
 
+// LocalCache 是带 TTL 与容量上限的本地内存缓存，按 FIFO 淘汰以应对热点访问。
 type LocalCache struct {
 	data      map[string]*cacheItem // 缓存键值存储
 	mu        sync.RWMutex          // 保护 data 的并发读写
@@ -584,6 +630,7 @@ type cacheItem struct {
 	expireTime time.Time   // 过期时间（绝对时间）
 }
 
+// NewLocalCache 创建本地缓存，指定最大条目数与默认过期时间并启动后台清理。
 func NewLocalCache(maxSize int, expire time.Duration) *LocalCache {
 	lc := &LocalCache{
 		data:      make(map[string]*cacheItem),
@@ -645,6 +692,7 @@ func LocalCacheDelete(key string) {
 	PublishCacheInvalidation(context.Background(), key)
 }
 
+// Get 读取本地缓存，命中且未过期返回 (值, true)，否则返回 (nil, false)。
 func (lc *LocalCache) Get(key string) (interface{}, bool) {
 	lc.mu.RLock()
 	defer lc.mu.RUnlock()
@@ -656,6 +704,7 @@ func (lc *LocalCache) Get(key string) (interface{}, bool) {
 	return nil, false
 }
 
+// Set 以默认 TTL 写入本地缓存，达到上限时按 FIFO 淘汰最旧条目。
 func (lc *LocalCache) Set(key string, value interface{}) {
 	lc.SetWithTTL(key, value, lc.expire)
 }
@@ -676,12 +725,14 @@ func (lc *LocalCache) SetWithTTL(key string, value interface{}, ttl time.Duratio
 	}
 }
 
+// Delete 从本地缓存删除指定 key。
 func (lc *LocalCache) Delete(key string) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	delete(lc.data, key)
 }
 
+// Clear 清空本地缓存的全部条目。
 func (lc *LocalCache) Clear() {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()

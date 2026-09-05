@@ -20,7 +20,7 @@ type HotKeyPolicy struct {
 
 // PolicyConfig 是从配置中心热更下发的缓存策略聚合。
 // 通过 configcenter.HotConfig.Cache 下发，并在配置变更时自动同步到本包
-//（见 configcenter.apply 中的 cache.SetPolicy）。
+// （见 configcenter.apply 中的 cache.SetPolicy）。
 type PolicyConfig struct {
 	// RedisTTL 按 key 模式（支持 * 通配符）动态覆盖写入 TTL（秒）。
 	// 例如 "verify_code:*": 300 会使 Set(ctx, "verify_code:1", ...) 使用 300s
@@ -49,7 +49,7 @@ func SetPolicy(p *PolicyConfig) {
 }
 
 // ResolveTTL 解析某个 key 的最终 TTL：若配置中心 RedisTTL 中命中该 key
-//（含通配符，精确模式优先），返回配置值；否则返回 defaultTTL。
+// （含通配符，精确模式优先），返回配置值；否则返回 defaultTTL。
 // Set / SetNX / Expire 等写操作内部均调用此函数，实现 TTL 的动态配置。
 func ResolveTTL(key string, defaultTTL time.Duration) time.Duration {
 	p, _ := cachePolicy.Load().(*PolicyConfig)

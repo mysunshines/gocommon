@@ -28,14 +28,15 @@ import (
 // 关于 RateLimit 与 Resilience 的语义区分：
 //   - RateLimit(config.RateLimitConfig)：本服务的入站总限流（被调用方，一个总阈值）；
 //   - Resilience(map[serviceKey]PolicySpec)：本服务对每个下游的出站韧性（调用方，按下游隔离）。
+//
 // 二者方向相反，在同一份 YAML 中并列、互不污染。
 type HotConfig struct {
-	LogLevel      string                          `yaml:"log_level" json:"log_level"`
-	RateLimit     config.RateLimitConfig          `yaml:"rate_limit" json:"rate_limit"`
-	JWTExpireTime int                             `yaml:"jwt_expire_time" json:"jwt_expire_time"`
+	LogLevel      string                           `yaml:"log_level" json:"log_level"`
+	RateLimit     config.RateLimitConfig           `yaml:"rate_limit" json:"rate_limit"`
+	JWTExpireTime int                              `yaml:"jwt_expire_time" json:"jwt_expire_time"`
 	Resilience    map[string]resilience.PolicySpec `yaml:"resilience" json:"resilience"`
-	Server        *config.ServerConfig            `yaml:"server" json:"server"`
-	Cache         cache.PolicyConfig              `yaml:"cache" json:"cache"`
+	Server        *config.ServerConfig             `yaml:"server" json:"server"`
+	Cache         cache.PolicyConfig               `yaml:"cache" json:"cache"`
 }
 
 // ServiceConfig 是单个服务接入配置中心的句柄：持有最新热更配置快照，

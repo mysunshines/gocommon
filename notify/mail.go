@@ -55,7 +55,7 @@ type Config struct {
 }
 
 const (
-	boundaryRelated    = "reportRELATEDboundary"
+	boundaryRelated     = "reportRELATEDboundary"
 	boundaryAlternative = "reportALTERNATIVEboundary"
 )
 

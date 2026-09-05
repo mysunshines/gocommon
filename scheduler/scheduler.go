@@ -46,13 +46,13 @@ type jobEntry struct {
 
 // Scheduler 定时调度器。
 type Scheduler struct {
-	mu       sync.Mutex           // 保护 jobs 并发读写
-	jobs     []*jobEntry          // 已注册任务列表
-	sem      chan struct{}        // 并发信号量，限制同时执行的任务数
-	stop     chan struct{}        // 停止信号，关闭后退出调度循环
-	loc      *time.Location       // 调度时区
-	interval time.Duration        // 内部轮询间隔（默认 1 分钟）
-	wg       sync.WaitGroup       // 等待正在执行的任务完成
+	mu       sync.Mutex                   // 保护 jobs 并发读写
+	jobs     []*jobEntry                  // 已注册任务列表
+	sem      chan struct{}                // 并发信号量，限制同时执行的任务数
+	stop     chan struct{}                // 停止信号，关闭后退出调度循环
+	loc      *time.Location               // 调度时区
+	interval time.Duration                // 内部轮询间隔（默认 1 分钟）
+	wg       sync.WaitGroup               // 等待正在执行的任务完成
 	onError  func(name string, err error) // 任务出错回调
 }
 

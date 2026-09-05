@@ -17,7 +17,7 @@ import (
 //   - 提供 Close() 做优雅 drain：停止接收新日志后，把 channel 中残留的日志尽量写完再返回。
 type AsyncWriter struct {
 	ch        chan []byte
-	dropCount int64 // 原子计数：因 channel 满而丢弃的日志条数
+	dropCount int64        // 原子计数：因 channel 满而丢弃的日志条数
 	dst       atomic.Value // 存当前 io.Writer，支持热替换（日志轮转）
 	wg        sync.WaitGroup
 	once      sync.Once

@@ -127,15 +127,15 @@ func initMetrics(name string) {
 			[]string{"operation"},
 		)
 
-	redisCacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_cache_hits_total",
-		Help: "Total number of Redis cache hits",
-	}, []string{"service"})
+		redisCacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_cache_hits_total",
+			Help: "Total number of Redis cache hits",
+		}, []string{"service"})
 
-	redisCacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_cache_misses_total",
-		Help: "Total number of Redis cache misses",
-	}, []string{"service"})
+		redisCacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_cache_misses_total",
+			Help: "Total number of Redis cache misses",
+		}, []string{"service"})
 
 		redisHotKeys = promauto.NewCounterVec(
 			prometheus.CounterOpts{
@@ -236,6 +236,7 @@ func initMetrics(name string) {
 	}
 }
 
+// RecordRequest 记录一次 HTTP 请求指标（请求耗时、HTTP 请求数，并递减在途请求计数）。
 func RecordRequest(service, method, endpoint string, status int, duration time.Duration) {
 	ensureInit()
 	requestsInFlight.Dec()
@@ -243,16 +244,19 @@ func RecordRequest(service, method, endpoint string, status int, duration time.D
 	httpRequestsTotal.WithLabelValues(service, method, endpoint, strconv.Itoa(status)).Inc()
 }
 
+// IncrementInFlight 递增在途请求数 Gauge，表示一个新的请求开始处理。
 func IncrementInFlight() {
 	ensureInit()
 	requestsInFlight.Inc()
 }
 
+// RecordError 记录一次错误，按错误类型累加错误总数。
 func RecordError(errorType string) {
 	ensureInit()
 	errorsTotal.WithLabelValues(errorType).Inc()
 }
 
+// UpdateSystemMetrics 采集并上报当前内存占用与 goroutine 数量等系统指标。
 func UpdateSystemMetrics() {
 	ensureInit()
 	var m runtime.MemStats
@@ -261,6 +265,7 @@ func UpdateSystemMetrics() {
 	goroutineCount.Set(float64(runtime.NumGoroutine()))
 }
 
+// RecordSlowQuery 记录一次 MySQL 慢查询，累加慢查询数并统计其耗时。
 func RecordSlowQuery(sql string, duration time.Duration) {
 	ensureInit()
 	mysqlSlowQueries.Inc()
@@ -297,32 +302,38 @@ func RecordCacheMiss() {
 	redisCacheMisses.WithLabelValues(serviceName).Inc()
 }
 
+// RecordHotKey 记录一次热点 key 访问，按 key 累加访问次数。
 func RecordHotKey(key string) {
 	ensureInit()
 	redisHotKeys.WithLabelValues(key).Inc()
 }
 
+// RecordPanic 记录一次 panic 发生，按服务名累加 panic 总数。
 func RecordPanic(service string) {
 	ensureInit()
 	panicCounter.WithLabelValues(service).Inc()
 }
 
+// RecordRPCRequest 记录一次 RPC 请求指标（RPC 请求数及请求耗时）。
 func RecordRPCRequest(service, method, status string, duration time.Duration) {
 	ensureInit()
 	rpcRequestsTotal.WithLabelValues(service, method, status).Inc()
 	rpcRequestDuration.WithLabelValues(service, method).Observe(duration.Seconds())
 }
 
+// RecordCacheOperation 记录一次缓存操作，按操作类型与状态累加。
 func RecordCacheOperation(operation, status string) {
 	ensureInit()
 	cacheOperations.WithLabelValues(operation, status).Inc()
 }
 
+// RecordDBOperation 记录一次数据库操作，按操作类型与状态累加。
 func RecordDBOperation(operation, status string) {
 	ensureInit()
 	dbOperations.WithLabelValues(operation, status).Inc()
 }
 
+// SetServiceHealth 设置指定服务的健康状态（1=健康，0=不健康）。
 func SetServiceHealth(service string, healthy bool) {
 	ensureInit()
 	if healthy {
@@ -352,6 +363,7 @@ func GatewayConnInc() {
 	gatewayActiveConnections.Inc()
 }
 
+// GatewayConnDec 递减网关活跃上游连接数 Gauge，表示一条上游连接关闭。
 func GatewayConnDec() {
 	ensureInit()
 	gatewayActiveConnections.Dec()

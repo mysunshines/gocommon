@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mysunshines/gocommon/constants"
 	"github.com/mysunshines/gocommon/config"
+	"github.com/mysunshines/gocommon/constants"
 
 	"github.com/sirupsen/logrus"
 )
@@ -52,12 +52,12 @@ type LokiHook struct {
 }
 
 type lokiEntry struct {
-	ts       time.Time
-	level    string
-	message  string
-	fields   logrus.Fields
-	service  string
-	traceID  string
+	ts      time.Time
+	level   string
+	message string
+	fields  logrus.Fields
+	service string
+	traceID string
 }
 
 // EnableLoki 启用 Loki 集中日志推送。lokiURL 为空时直接跳过（降级）。

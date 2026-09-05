@@ -12,8 +12,8 @@ import (
 // 延迟创建、并发安全。策略热更时通过 SetPolicy 更新 Policy，但 breaker 实例本身
 // 是按 key 复用的（避免热更导致熔断计数被重置）。
 var (
-	mgmtMu    sync.Mutex
-	managers  = make(map[string]*serviceGuard)
+	mgmtMu   sync.Mutex
+	managers = make(map[string]*serviceGuard)
 )
 
 type serviceGuard struct {

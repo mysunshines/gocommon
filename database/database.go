@@ -35,6 +35,7 @@ type Config struct {
 	MaxLifeTime  int    // 连接最大存活时间（秒）
 }
 
+// Init 初始化全局数据库连接，使用 sync.Once 保证仅执行一次，并按环境设置日志级别、校验连通性后返回错误。
 func Init(cfg *config.DatabaseConfig, env string) error {
 	var initErr error
 	once.Do(func() {
@@ -80,6 +81,7 @@ func Init(cfg *config.DatabaseConfig, env string) error {
 	return initErr
 }
 
+// GetDB 返回全局数据库连接实例（*gorm.DB）。
 func GetDB() *gorm.DB {
 	return db
 }
@@ -89,16 +91,19 @@ func GetDBConn() *gorm.DB {
 	return db
 }
 
+// SlowQueryLogger 实现 gorm 的 logger.Interface，用于按级别记录 SQL 并统计慢查询。
 type SlowQueryLogger struct {
 	LogLevel logger.LogLevel // 日志级别过滤
 }
 
+// LogMode 基于当前 logger 设置日志级别，并返回新的 logger.Interface 实例（gorm 要求不可变）。
 func (s *SlowQueryLogger) LogMode(level logger.LogLevel) logger.Interface {
 	newLogger := *s
 	newLogger.LogLevel = level
 	return &newLogger
 }
 
+// Error 记录 SQL 执行错误日志，附带 traceID 便于链路追踪（不受日志级别过滤）。
 func (s *SlowQueryLogger) Error(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 {
 		traceID := middleware.GetTraceIDFromContext(ctx)
@@ -106,6 +111,7 @@ func (s *SlowQueryLogger) Error(ctx context.Context, _ string, values ...interfa
 	}
 }
 
+// Info 记录 Info 级别 SQL 日志，受 LogLevel 过滤并附带 traceID。
 func (s *SlowQueryLogger) Info(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 && s.LogLevel >= logger.Info {
 		traceID := middleware.GetTraceIDFromContext(ctx)
@@ -113,6 +119,7 @@ func (s *SlowQueryLogger) Info(ctx context.Context, _ string, values ...interfac
 	}
 }
 
+// Warn 记录 Warn 级别 SQL 日志，受 LogLevel 过滤并附带 traceID。
 func (s *SlowQueryLogger) Warn(ctx context.Context, _ string, values ...interface{}) {
 	if len(values) > 0 && s.LogLevel >= logger.Warn {
 		traceID := middleware.GetTraceIDFromContext(ctx)
@@ -120,6 +127,7 @@ func (s *SlowQueryLogger) Warn(ctx context.Context, _ string, values ...interfac
 	}
 }
 
+// Trace 记录每次 SQL 执行耗时与影响行数，统计 DB 操作指标并对慢查询告警。
 func (s *SlowQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	elapsed := time.Since(begin)
 	sql, rows := fc()
@@ -156,6 +164,7 @@ func (s *SlowQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() 
 	}
 }
 
+// Print 实现 gorm logger.Interface，在触发慢查询时记录指标与告警。
 func (s *SlowQueryLogger) Print(values ...interface{}) {
 	if len(values) > 0 {
 		if sq, ok := values[0].(string); ok && sq == "slow query" {
@@ -165,10 +174,12 @@ func (s *SlowQueryLogger) Print(values ...interface{}) {
 	}
 }
 
+// WithContext 返回携带指定 context 的 *gorm.DB，便于链路追踪与超时控制。
 func WithContext(ctx context.Context) *gorm.DB {
 	return db.WithContext(ctx)
 }
 
+// Close 关闭全局数据库连接，未初始化时直接返回 nil。
 func Close() error {
 	if db != nil {
 		sqlDB, err := db.DB()
@@ -192,8 +203,10 @@ func Ping(ctx context.Context) error {
 	return sqlDB.PingContext(ctx)
 }
 
+// TxFunc 表示在事务中执行的处理函数，接收事务 *gorm.DB 并返回错误。
 type TxFunc func(*gorm.DB) error
 
+// Transaction 在数据库事务中执行给定的 TxFunc，由 GORM 自动提交或回滚。
 func Transaction(fn TxFunc) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		return fn(tx)

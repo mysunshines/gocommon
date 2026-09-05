@@ -15,7 +15,7 @@ import (
 
 var (
 	logger      *logrus.Logger
-	asyncWriter *AsyncWriter  // 异步写入器，包裹 stdout/文件，避免日志 I/O 阻塞请求路径
+	asyncWriter *AsyncWriter // 异步写入器，包裹 stdout/文件，避免日志 I/O 阻塞请求路径
 	once        sync.Once
 	currentDate string        // 当前日志文件对应的日期
 	logDirPath  string        // 日志目录
@@ -23,6 +23,7 @@ var (
 	stopCh      chan struct{} // 停止轮转信号
 )
 
+// Init 初始化全局日志器：设置日志级别、服务名、输出目标（stdout + 文件）并启动后台日志轮转。
 func Init(logDir, logLevel, svcName string) {
 	once.Do(func() {
 		logger = logrus.New()
@@ -67,6 +68,7 @@ func Init(logDir, logLevel, svcName string) {
 	})
 }
 
+// GetLogger 获取全局日志器实例；未初始化时按默认参数自动初始化。
 func GetLogger() *logrus.Logger {
 	if logger == nil {
 		Init(constants.DefaultLogDir, constants.DefaultLogLevel, constants.ServiceNameGateway)
@@ -74,14 +76,17 @@ func GetLogger() *logrus.Logger {
 	return logger
 }
 
+// Info 输出信息（info）级别日志。
 func Info(args ...interface{}) {
 	GetLogger().Info(args...)
 }
 
+// Infof 按格式输出信息（info）级别日志。
 func Infof(format string, args ...interface{}) {
 	GetLogger().Infof(format, args...)
 }
 
+// Debug 输出调试（debug）级别日志。
 func Debug(args ...interface{}) {
 	GetLogger().Debug(args...)
 }
@@ -96,40 +101,49 @@ func IsDebug() bool {
 	return logger.GetLevel() <= logrus.DebugLevel
 }
 
+// Debugf 按格式输出调试（debug）级别日志。
 func Debugf(format string, args ...interface{}) {
 	GetLogger().Debugf(format, args...)
 }
 
+// Warn 输出警告（warn）级别日志。
 func Warn(args ...interface{}) {
 	GetLogger().Warn(args...)
 }
 
+// Warnf 按格式输出警告（warn）级别日志。
 func Warnf(format string, args ...interface{}) {
 	GetLogger().Warnf(format, args...)
 }
 
+// Error 输出错误（error）级别日志。
 func Error(args ...interface{}) {
 	GetLogger().Error(args...)
 }
 
+// Errorf 按格式输出错误（error）级别日志。
 func Errorf(format string, args ...interface{}) {
 	GetLogger().Errorf(format, args...)
 }
 
+// Fatal 输出致命（fatal）级别日志并退出进程（退出前先落盘残留日志）。
 func Fatal(args ...interface{}) {
 	FlushLog() // 退出前先把残留日志落盘，避免崩溃日志丢失
 	GetLogger().Fatal(args...)
 }
 
+// Fatalf 按格式输出致命（fatal）级别日志并退出进程（退出前先落盘残留日志）。
 func Fatalf(format string, args ...interface{}) {
 	FlushLog() // 退出前先把残留日志落盘，避免崩溃日志丢失
 	GetLogger().Fatalf(format, args...)
 }
 
+// WithField 返回一个携带单个字段的日志上下文（*logrus.Entry）。
 func WithField(key string, value interface{}) *logrus.Entry {
 	return GetLogger().WithField(key, value)
 }
 
+// WithFields 返回一个携带多个字段的日志上下文（*logrus.Entry）。
 func WithFields(fields logrus.Fields) *logrus.Entry {
 	return GetLogger().WithFields(fields)
 }

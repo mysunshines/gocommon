@@ -164,7 +164,7 @@ func DeleteSmart(ctx context.Context, key string) error {
 }
 
 // ExistsSmart 热点感知存在性检查：分片策略下随机读一个分片即可
-//（写路径保证全分片数据一致）。
+// （写路径保证全分片数据一致）。
 func ExistsSmart(ctx context.Context, key string) (bool, error) {
 	p, hot := hotKeyPolicyFor(key)
 	if hot && p.ShardCount > 1 {

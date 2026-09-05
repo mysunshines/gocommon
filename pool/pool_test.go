@@ -121,5 +121,3 @@ func TestSubmitContextCancel(t *testing.T) {
 		t.Fatal("expected ctx error when pool full and ctx cancelled")
 	}
 }
-
-

@@ -19,13 +19,13 @@ import (
 
 // Client TCP 客户端
 type Client struct {
-	address        string        // 远端地址 host:port
-	conn           net.Conn      // TCP 连接
-	connMu         sync.RWMutex  // 保护 conn 的并发读写
-	readTimeout    time.Duration // 读超时（0 表示不限）
-	writeTimeout   time.Duration // 写超时（0 表示不限）
-	keepAlive      bool          // 是否启用 TCP KeepAlive
-	resilienceKey  string        // resilience serviceKey；非空时其 Timeout 覆盖下方读写超时
+	address       string        // 远端地址 host:port
+	conn          net.Conn      // TCP 连接
+	connMu        sync.RWMutex  // 保护 conn 的并发读写
+	readTimeout   time.Duration // 读超时（0 表示不限）
+	writeTimeout  time.Duration // 写超时（0 表示不限）
+	keepAlive     bool          // 是否启用 TCP KeepAlive
+	resilienceKey string        // resilience serviceKey；非空时其 Timeout 覆盖下方读写超时
 }
 
 // Config 连接配置

@@ -22,11 +22,11 @@ import (
 
 // Client 是 Grafana 图片渲染客户端。
 type Client struct {
-	baseURL  string // 如 http://grafana:3000
-	apiKey   string // 服务账号 Token（优先于 basic auth）
-	user     string // basic auth 用户名（apiKey 为空时使用）
-	password string // basic auth 密码
-	orgID    int    // 组织 ID（默认 1）
+	baseURL  string       // 如 http://grafana:3000
+	apiKey   string       // 服务账号 Token（优先于 basic auth）
+	user     string       // basic auth 用户名（apiKey 为空时使用）
+	password string       // basic auth 密码
+	orgID    int          // 组织 ID（默认 1）
 	http     *http.Client // 底层 HTTP 客户端
 }
 
