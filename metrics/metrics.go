@@ -23,6 +23,7 @@ var (
 	redisCacheHits    *prometheus.CounterVec
 	redisCacheMisses  *prometheus.CounterVec
 	redisHotKeys      *prometheus.CounterVec
+	redisCommands     *prometheus.CounterVec
 
 	// serviceName 为当前服务名（如 constants.ServiceNameArticle），用于给
 	// redis_cache_hits_total / redis_cache_misses_total 打上 service 标签，
@@ -144,6 +145,14 @@ func initMetrics(name string) {
 			},
 			[]string{"key"},
 		)
+
+		// redis_commands_total 命令级计数：每次走 gocommon cache 封装的 Redis 命令都会上报，
+		// 标签 service/op/result。op 为命令名（如 GET/ZADD/ZINCRBY，固定低基数），
+		// result 为 ok/error。命中率等语义指标仍见 RecordRedisHit（redis_cache_hits_total）。
+		redisCommands = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_commands_total",
+			Help: "Total number of Redis commands executed, labeled by command and result",
+		}, []string{"service", "op", "result"})
 
 		httpRequestsTotal = promauto.NewCounterVec(
 			prometheus.CounterOpts{
@@ -306,6 +315,18 @@ func RecordCacheMiss() {
 func RecordHotKey(key string) {
 	ensureInit()
 	redisHotKeys.WithLabelValues(key).Inc()
+}
+
+// RecordRedisCommand 记录一次 Redis 命令调用（命令级计数），由 gocommon cache 包的
+// logRedisOp 在每次命令执行后统一调用。op 为命令名（如 GET/ZADD/ZINCRBY），
+// result 为 "ok"/"error"。命中率等语义指标仍见 RecordRedisHit（redis_cache_hits_total）。
+func RecordRedisCommand(op string, err error) {
+	ensureInit()
+	result := "ok"
+	if err != nil {
+		result = "error"
+	}
+	redisCommands.WithLabelValues(serviceName, op, result).Inc()
 }
 
 // RecordPanic 记录一次 panic 发生，按服务名累加 panic 总数。

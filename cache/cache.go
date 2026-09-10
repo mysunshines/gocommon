@@ -115,6 +115,8 @@ func redisReady() bool {
 // logRedisOp 记录 Redis 操作日志，成功时以 Debug 级别输出避免噪音，
 // 失败时以 Error 级别输出。traceID 以独立字段输出，便于日志系统按 traceID 检索串联。
 func logRedisOp(ctx context.Context, op, key string, err error) {
+	// 命令级 metrics：每次走封装的 Redis 命令都会上报 redis_commands_total{service,op,result}。
+	metrics.RecordRedisCommand(op, err)
 	traceID := middleware.GetTraceIDFromContext(ctx)
 	if err != nil {
 		log.WithFields(logrus.Fields{
@@ -451,6 +453,37 @@ func ZRevRangeWithScores(ctx context.Context, key string, start, stop int64) ([]
 func ZCard(ctx context.Context, key string) (int64, error) {
 	val, err := rdb.ZCard(ctx, GetKey(key)).Result()
 	logRedisOp(ctx, "ZCARD", key, err)
+	return val, err
+}
+
+// ZScore 返回 member 在 key 中的分数（未上榜返回 redis.Nil）。
+func ZScore(ctx context.Context, key string, member string) (float64, error) {
+	if !redisReady() {
+		return 0, fmt.Errorf("redis not initialized")
+	}
+	val, err := rdb.ZScore(ctx, GetKey(key), member).Result()
+	logRedisOp(ctx, "ZSCORE", key, err)
+	return val, err
+}
+
+// ZIncrBy 对 member 的分数增加 increment（支持负数即递减），返回新分数。
+// 用于排行榜计分、积分摄入等「增量推送」场景。
+func ZIncrBy(ctx context.Context, key string, increment float64, member string) (float64, error) {
+	if !redisReady() {
+		return 0, fmt.Errorf("redis not initialized")
+	}
+	val, err := rdb.ZIncrBy(ctx, GetKey(key), increment, member).Result()
+	logRedisOp(ctx, "ZINCRBY", key, err)
+	return val, err
+}
+
+// ZRevRank 返回 member 在 key 中的倒序排名（0-based；未上榜返回 redis.Nil）。
+func ZRevRank(ctx context.Context, key string, member string) (int64, error) {
+	if !redisReady() {
+		return 0, fmt.Errorf("redis not initialized")
+	}
+	val, err := rdb.ZRevRank(ctx, GetKey(key), member).Result()
+	logRedisOp(ctx, "ZREVRANK", key, err)
 	return val, err
 }
 
