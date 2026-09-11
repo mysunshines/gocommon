@@ -167,20 +167,8 @@ const (
 // 服务名与 Redis Key 前缀
 // ============================================================================
 const (
-	// ServiceNameUser 用户服务名
-	ServiceNameUser = "user-service"
-
-	// ServiceNameArticle 文章服务名
-	ServiceNameArticle = "article-service"
-
-	// ServiceNameComment 评论服务名
-	ServiceNameComment = "comment-service"
-
 	// ServiceNameGateway 网关服务名
 	ServiceNameGateway = "gateway"
-
-	// ServiceNameReport 报表服务名
-	ServiceNameReport = "report-service"
 
 	// ServiceNameNotification 站内消息服务名
 	// 网关按 proto package 约定（notification.v1.NotificationService）自动派生路由，
