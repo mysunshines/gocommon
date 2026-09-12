@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/mysunshines/gocommon/metrics"
+
 	"golang.org/x/time/rate"
 )
 
@@ -64,6 +66,9 @@ func guardFor(serviceKey string, p Policy) *serviceGuard {
 //   - 调用失败且有 Fallback：返回 Fallback 的结果（error 由 Fallback 决定）；
 //   - 调用失败且无 Fallback：返回原 error（可能被包装为熔断/限流错误）。
 func (p Policy) Execute(ctx context.Context, fn func(ctx context.Context) error, fallback func(ctx context.Context) (interface{}, error)) error {
+	// serviceKey 同时作为 guard 复用键与 metrics 的服务标签（按下游区分）。
+	key := serviceKeyOf(ctx)
+
 	// 1) 超时
 	callCtx := ctx
 	if p.Timeout > 0 {
@@ -73,16 +78,19 @@ func (p Policy) Execute(ctx context.Context, fn func(ctx context.Context) error,
 	}
 
 	// 2) 限流
-	g := guardFor(serviceKeyOf(ctx), p)
+	g := guardFor(key, p)
 	if g.limiter != nil {
 		if err := g.limiter.Wait(callCtx); err != nil {
 			// 限流导致超时等待失败：交给降级逻辑
+			metrics.RecordResilienceExecution(key, "rate_limited")
 			return p.degrade(callCtx, err, fallback)
 		}
 	}
 
 	// 3) 熔断
 	if g.breaker != nil && !g.breaker.Allow() {
+		metrics.RecordResilienceExecution(key, "circuit_open")
+		metrics.SetCircuitState(key, g.breaker.stateValue())
 		return p.degrade(callCtx, ErrCircuitOpen, fallback)
 	}
 
@@ -96,21 +104,34 @@ func (p Policy) Execute(ctx context.Context, fn func(ctx context.Context) error,
 		} else if err == nil {
 			g.breaker.Success()
 		}
+		// 计数更新后再采样一次，使 Gauge 反映本轮调用后的最新熔断态。
+		metrics.SetCircuitState(key, g.breaker.stateValue())
 	}
 	// 任何失败都尝试降级；无 Fallback 则原样返回错误。
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			metrics.RecordResilienceExecution(key, "timeout")
+		} else {
+			metrics.RecordResilienceExecution(key, "error")
+		}
 		return p.degrade(callCtx, err, fallback)
 	}
+	metrics.RecordResilienceExecution(key, "success")
 	return nil
 }
 
 // degrade 在出错时优先走 Fallback；无 Fallback 则原样返回错误（必要时包装）。
+// 每次实际发生的降级调用（fallback 非 nil）都会计入 resilience_fallback_total，
+// 使"业务已降级"这一此前完全不可见的状态可观测。
 func (p Policy) degrade(ctx context.Context, cause error, fallback func(ctx context.Context) (interface{}, error)) error {
 	if fallback != nil {
+		key := serviceKeyOf(ctx)
 		if _, fbErr := fallback(ctx); fbErr != nil {
 			// 降级函数自身也失败：以降级错误为主，cause 作为底层原因
+			metrics.RecordResilienceFallback(key, "error")
 			return errors.Join(fbErr, cause)
 		}
+		metrics.RecordResilienceFallback(key, "success")
 		return nil
 	}
 	return cause

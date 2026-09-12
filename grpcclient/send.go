@@ -2,12 +2,14 @@ package grpcclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mysunshines/gocommon/log"
+	"github.com/mysunshines/gocommon/metrics"
 	"github.com/mysunshines/gocommon/middleware"
 	"github.com/mysunshines/gocommon/resilience"
 
@@ -172,6 +174,10 @@ func SendRequestWithFallback(ctx context.Context, api string, req, resp proto.Me
 	invokeErr := policy.Execute(ctx, invoke, fb)
 	latency := time.Since(start)
 
+	// 出站调用指标（客户端视角）：服务端 rpc_requests_total 只反映被调用方的处理情况，
+	// 无法体现调用方侧的熔断打开 / 超时 / 连接失败，这里补齐这一监控盲区。
+	metrics.RecordGRPCClientRequest(alias, method, clientStatus(invokeErr), latency)
+
 	if invokeErr != nil {
 		log.Errorf("[gRPC-Client] traceID=%v | ctxKV=%v | method=%s | target=%s | latency=%v | err=%v",
 			traceID, ctxKV, fullMethod, entry.Target, latency, invokeErr)
@@ -186,6 +192,22 @@ func SendRequestWithFallback(ctx context.Context, api string, req, resp proto.Me
 	log.Infof("[gRPC-Client] traceID=%v | method=%s | target=%s | latency=%v",
 		traceID, fullMethod, entry.Target, latency)
 	return nil
+}
+
+// clientStatus 将出站调用的返回结果映射为 grpc_client_requests_total 的 status 标签。
+// 说明：限流等待失败在 resilience 侧表现为 context 超时（DeadlineExceeded），故归入 TIMEOUT；
+// 更精确的限流计数见 resilience_executions_total{outcome="rate_limited"}。
+func clientStatus(err error) string {
+	switch {
+	case err == nil:
+		return "OK"
+	case errors.Is(err, resilience.ErrCircuitOpen):
+		return "CIRCUIT_OPEN"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "TIMEOUT"
+	default:
+		return "ERROR"
+	}
 }
 
 // parseAPI 将 api 拆分为逻辑服务名(alias)与方法名，兼容两种风格：

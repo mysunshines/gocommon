@@ -46,6 +46,18 @@ var (
 	// 报表生成计数（dashboard report-service.json 引用 report_generated_total）
 	reportGeneratedTotal *prometheus.CounterVec
 
+	// 出站调用（gRPC 客户端视角）指标。
+	// 服务端已有 rpc_requests_total（GRPCMetricsInterceptor 埋点），但客户端出站调用
+	// 此前无任何打点，是监控盲区：下游故障在调用方侧不可见。由 grpcclient 包埋点。
+	grpcClientRequestsTotal   *prometheus.CounterVec
+	grpcClientRequestDuration *prometheus.HistogramVec
+
+	// 韧性（resilience）指标：超时 / 限流 / 熔断 / 降级事件此前完全不可观测
+	// （Policy.Execute 内无任何打点，连日志都没有）。由 resilience 包埋点。
+	resilienceExecutionsTotal *prometheus.CounterVec
+	resilienceFallbackTotal   *prometheus.CounterVec
+	resilienceCircuitState    *prometheus.GaugeVec
+
 	once sync.Once
 )
 
@@ -242,6 +254,51 @@ func initMetrics(name string) {
 			},
 			[]string{"type"},
 		)
+
+		// ---- 出站调用（gRPC 客户端视角） ----
+		// service 为下游服务标识（grpcclient 注册的 alias，如 "user.v1"），
+		// method 为方法名，status 为 OK / ERROR / CIRCUIT_OPEN / RATE_LIMITED / TIMEOUT。
+		grpcClientRequestsTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "grpc_client_requests_total",
+				Help: "Total number of outbound gRPC requests (client side)",
+			},
+			[]string{"service", "method", "status"},
+		)
+
+		grpcClientRequestDuration = promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "grpc_client_request_duration_seconds",
+				Help:    "Outbound gRPC request latency in seconds (client side)",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"service", "method"},
+		)
+
+		// ---- 韧性（resilience）----
+		resilienceExecutionsTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "resilience_executions_total",
+				Help: "Total number of outbound calls wrapped by resilience Policy.Execute, by outcome",
+			},
+			[]string{"service", "outcome"},
+		)
+
+		resilienceFallbackTotal = promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "resilience_fallback_total",
+				Help: "Total number of resilience fallback invocations, by result",
+			},
+			[]string{"service", "result"},
+		)
+
+		resilienceCircuitState = promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "resilience_circuit_state",
+				Help: "Current circuit breaker state (0=closed, 1=open, 2=half-open)",
+			},
+			[]string{"service"},
+		)
 	}
 }
 
@@ -340,6 +397,37 @@ func RecordRPCRequest(service, method, status string, duration time.Duration) {
 	ensureInit()
 	rpcRequestsTotal.WithLabelValues(service, method, status).Inc()
 	rpcRequestDuration.WithLabelValues(service, method).Observe(duration.Seconds())
+}
+
+// RecordGRPCClientRequest 记录一次出站 gRPC 调用（客户端视角）。
+// service 为下游服务标识（grpcclient 注册的 alias，如 "user.v1"），method 为方法名，
+// status 为调用结果：OK / ERROR / CIRCUIT_OPEN / RATE_LIMITED / TIMEOUT。
+// 与服务端 RecordRPCRequest（rpc_requests_total）互补：本指标让「下游故障在调用方侧」
+// 可见——熔断打开、超时、限流拒绝都只在调用方发生，服务端指标无法体现。
+func RecordGRPCClientRequest(service, method, status string, duration time.Duration) {
+	ensureInit()
+	grpcClientRequestsTotal.WithLabelValues(service, method, status).Inc()
+	grpcClientRequestDuration.WithLabelValues(service, method).Observe(duration.Seconds())
+}
+
+// RecordResilienceExecution 记录一次被 Policy.Execute 包裹的出站调用结果。
+// outcome 取值：success / error / circuit_open / rate_limited / timeout。
+func RecordResilienceExecution(service, outcome string) {
+	ensureInit()
+	resilienceExecutionsTotal.WithLabelValues(service, outcome).Inc()
+}
+
+// RecordResilienceFallback 记录一次降级（Fallback）调用，result 为 success / error。
+func RecordResilienceFallback(service, result string) {
+	ensureInit()
+	resilienceFallbackTotal.WithLabelValues(service, result).Inc()
+}
+
+// SetCircuitState 设置指定下游熔断器的当前状态，便于在 Grafana 上直接观察熔断态：
+// 0=closed（正常放行）、1=open（直接拒绝）、2=half-open（探测放行）。
+func SetCircuitState(service string, state float64) {
+	ensureInit()
+	resilienceCircuitState.WithLabelValues(service).Set(state)
 }
 
 // RecordCacheOperation 记录一次缓存操作，按操作类型与状态累加。

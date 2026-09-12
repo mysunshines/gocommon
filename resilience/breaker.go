@@ -132,3 +132,15 @@ func (b *breaker) resetWindow() {
 	b.total, b.fails = 0, 0
 	b.since = time.Now()
 }
+
+// stateValue 返回当前熔断状态的数值表示，供 metrics 打点观测：
+// 0=closed（正常放行）、1=open（直接拒绝）、2=half-open（探测放行）。
+// 未启用熔断（Enabled=false）时恒返回 closed(0)，与"永远放行"的实际行为一致。
+func (b *breaker) stateValue() float64 {
+	if !b.cfg.Enabled {
+		return float64(stateClosed)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return float64(b.state)
+}
