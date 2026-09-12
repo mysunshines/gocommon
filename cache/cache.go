@@ -330,6 +330,40 @@ func HGet(ctx context.Context, key, field string) (string, error) {
 	return val, err
 }
 
+// HMGet 批量获取哈希表中多个字段的值，一次网络往返（避免逐字段 HGet 的 N 次往返）。
+// 返回值与 fields 顺序一一对应；字段不存在时对应位置为 nil，与 redis HMGET 语义一致。
+func HMGet(ctx context.Context, key string, fields ...string) ([]interface{}, error) {
+	val, err := rdb.HMGet(ctx, GetKey(key), fields...).Result()
+	logRedisOp(ctx, "HMGET", key, err)
+	return val, err
+}
+
+// HMGetMap 是 HMGet 的便捷封装：返回 field -> value 映射，仅包含实际存在的字段
+// （redis 为不存在的字段返回 nil，此处已过滤），便于调用方直接查表。
+// 典型场景：已有一批 ID，只需取这些 ID 的属性，而不必像 HGetAll 那样拉取整个哈希表
+// —— 例如榜单回填只关心本次涉及的 member 的更新时间，HGetAll 会把全量 member 拉回来。
+// fields 为空时返回空 map（不产生网络调用）。
+func HMGetMap(ctx context.Context, key string, fields ...string) (map[string]string, error) {
+	if len(fields) == 0 {
+		return map[string]string{}, nil
+	}
+	vals, err := rdb.HMGet(ctx, GetKey(key), fields...).Result()
+	logRedisOp(ctx, "HMGET", key, err)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(fields))
+	for i, v := range vals {
+		if i >= len(fields) || v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok {
+			out[fields[i]] = s
+		}
+	}
+	return out, nil
+}
+
 // HGetAll 返回哈希表中所有字段及其值。
 func HGetAll(ctx context.Context, key string) (map[string]string, error) {
 	val, err := rdb.HGetAll(ctx, GetKey(key)).Result()
