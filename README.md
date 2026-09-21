@@ -367,25 +367,20 @@ constants.EnvLogDir     // "LOG_DIR"
 constants.EnvAppEnv     // "APP_ENV"
 constants.EnvConfigPath // "CONFIG_PATH"
 
-// 服务名（跨服务契约，Consul 注册与 grpcclient 注册表共用）
-constants.ServiceNameUser         // "user-service"
-constants.ServiceNameArticle      // "article-service"
-constants.ServiceNameComment      // "comment-service"
+// 服务名（跨服务契约：仅 gateway 直接依赖的服务名在此登记）
 constants.ServiceNameGateway      // "gateway"
 constants.ServiceNameNotification // "notification-service"
 
 // 站内消息契约（gateway / notification-service / 前端三方共用）
 constants.WSPathNotification          // "/ws/notification"（WS 路径，Nginx 转发目标）
-constants.RedisKeyPrefixNotification  // "notification:"（未读计数缓存前缀）
 constants.DefaultCacheTTLNotification // 600s（未读计数缓存 TTL）
-constants.MetricPrefixNotification    // "notification_service"（指标前缀）
 
 // API 路径前缀（网关路由与前端 API_BASE 共用）
 constants.APIPathPrefix // "/api/v1"
 constants.GRPCServiceNameSuffix // "Service"（服务名推导约定：<prefix>-service → <pkg>.v1.<Prefix>Service）
 ```
 
-> **契约常量的意义**：跨服务/跨仓库的字符串（服务名、路径、前缀）集中在此处单一来源，任何一方的改动在编译期传导到所有使用方，避免字符串散落导致的静默不一致。新增微服务应在此登记服务名常量。
+> **契约常量的意义**：gocommon 只承载"跨仓库契约"常量（gateway 反代/路由所需的服务名、WS 路径、API 前缀等），任何一方的改动在编译期传导到所有使用方，避免字符串散落导致的静默不一致。各微服务自身的 Redis Key 前缀、Prometheus 指标前缀、业务错误码等属于服务内部实现细节，下沉到各服务的 `internal/constants`（如 ranking-service 已示范），避免 gocommon 反向依赖业务。
 
 ### 统一错误码
 
@@ -399,17 +394,7 @@ constants.GRPCServiceNameSuffix // "Service"（服务名推导约定：<prefix>-
  10007  ErrCodeTimeout             请求超时
  10008  ErrCodeRateLimited         请求被限流
 
- 20001  ErrCodeUserExists          用户已存在
- 20002  ErrCodeTokenInvalid        令牌无效
- 20003  ErrCodePasswordIncorrect   密码错误
- 20005  ErrCodeUserNotFound        用户不存在
- 20006  ErrCodeTokenExpired        令牌过期
-
- 30001  ErrCodeArticleNotFound     文章不存在
-
- 40001  ErrCodeCommentNotFound     评论不存在
- 40003  ErrCodeCommentDisabled     评论已关闭
- 40004  ErrCodeCommentBlacklist    用户被拉黑
+业务错误码（20000-49999 区间）由各服务在各自 proto/errors 中定义，不在 gocommon 集中维护。
 ```
 
 ---

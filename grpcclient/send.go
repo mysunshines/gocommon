@@ -108,7 +108,7 @@ func getConn(target string) (*grpc.ClientConn, error) {
 //
 // 典型用法：
 //
-//	grpcclient.RegisterService(constants.UserServiceV1Alias, constants.UserServiceV1Service, cfg.UserService.Addr())
+//	grpcclient.RegisterService("user.v1", "user.v1.UserService", cfg.UserService.Addr())
 //	var resp user.IsBlacklistResponse
 //	err := grpcclient.SendRequest(ctx, user.UserService_IsInBlacklist_FullMethodName,
 //	    &user.IsBlacklistRequest{UserId: 1, TargetUserId: 2}, &resp)

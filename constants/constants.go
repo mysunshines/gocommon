@@ -164,7 +164,11 @@ const (
 )
 
 // ============================================================================
-// 服务名与 Redis Key 前缀
+// 服务名与跨服务契约（gateway 反代/路由所需，必须共享）
+//
+// 约定：本文件只放"跨仓库契约"常量。各微服务自身的 Redis Key 前缀、Prometheus
+// 指标前缀、业务错误码等属于服务内部实现细节，下沉到各服务的
+// internal/constants（ranking-service 已示范），避免 gocommon 反向依赖业务。
 // ============================================================================
 const (
 	// ServiceNameGateway 网关服务名
@@ -179,30 +183,6 @@ const (
 	// gateway 同源 /ws/notification 反向代理到 notification-service 的 HTTP 端口，
 	// 前端连 ws(s)://host/ws/notification?token=xxx，鉴权在下游 WS 处理器内完成。
 	WSPathNotification = "/ws/notification"
-
-	// RedisKeyPrefixUser 用户服务 Redis Key 前缀
-	RedisKeyPrefixUser = "user-service:"
-
-	// RedisKeyPrefixArticle 文章服务 Redis Key 前缀
-	RedisKeyPrefixArticle = "article:"
-
-	// RedisKeyPrefixComment 评论服务 Redis Key 前缀
-	RedisKeyPrefixComment = "comment:"
-
-	// RedisKeyPrefixNotification 站内消息服务 Redis Key 前缀
-	RedisKeyPrefixNotification = "notification:"
-
-	// MetricPrefixUser 用户服务 Prometheus 指标前缀
-	MetricPrefixUser = "user_service"
-
-	// MetricPrefixArticle 文章服务 Prometheus 指标前缀
-	MetricPrefixArticle = "article_service"
-
-	// MetricPrefixComment 评论服务 Prometheus 指标前缀
-	MetricPrefixComment = "comment_service"
-
-	// MetricPrefixNotification 站内消息服务 Prometheus 指标前缀
-	MetricPrefixNotification = "notification_service"
 )
 
 // ============================================================================
@@ -224,39 +204,7 @@ const (
 	DefaultProtoVersion = "v1"
 )
 
-// ============================================================================
-// 下游服务 gRPC API 标识（调用侧）
-//
-// 微服务之间通过 grpcclient.SendRequest(api, ...) 动态调用时，api 格式为
-// "<逻辑名>.<Method>"，例如 "user.v1.IsInBlacklist"。逻辑名(alias)需先通过
-// grpcclient.RegisterService(alias, protoService, target) 绑定到真实 proto
-// 全限定服务名与地址。
-//
-// 逻辑名带版本号（user.v1），与 HTTP API 的 /api/v1 风格一致；当同一下游同时提供
-// v1、v2 时，分别用不同逻辑名注册即可，SendRequest 用对应前缀选择版本：
-//
-//	grpcclient.RegisterService(constants.UserServiceV1Alias, constants.UserServiceV1Service, addr)
-//	grpcclient.RegisterService(constants.UserServiceV2Alias, constants.UserServiceV2Service, addr) // 同地址或不同部署均可
-//	grpcclient.SendRequest(ctx, constants.UserServiceV1Alias+".IsInBlacklist", ...)
-//	grpcclient.SendRequest(ctx, constants.UserServiceV2Alias+".SomeNewMethod", ...)
-//
-// ============================================================================
-const (
-	// UserServiceV1Alias 用户服务 v1 的调用侧逻辑名（SendRequest api 前缀）
-	UserServiceV1Alias = "user.v1"
-	// UserServiceV1Service 用户服务 v1 的真实 proto 全限定服务名
-	UserServiceV1Service = "user.v1.UserService"
 
-	// ArticleServiceV1Alias 文章服务 v1 的调用侧逻辑名（SendRequest api 前缀）
-	ArticleServiceV1Alias = "article.v1"
-	// ArticleServiceV1Service 文章服务 v1 的真实 proto 全限定服务名
-	ArticleServiceV1Service = "article.v1.ArticleService"
-
-	// CommentServiceV1Alias 评论服务 v1 的调用侧逻辑名（SendRequest api 前缀）
-	CommentServiceV1Alias = "comment.v1"
-	// CommentServiceV1Service 评论服务 v1 的真实 proto 全限定服务名
-	CommentServiceV1Service = "comment.v1.CommentService"
-)
 
 // ============================================================================
 // 统一错误码区间分配
@@ -299,24 +247,7 @@ const (
 	ErrCodeRateLimited = 10008
 )
 
-// 各服务向网关暴露的业务错误码（与各服务 proto/errors 保持一致）
-const (
-	// ---- 用户服务 (20000-29999) ----
-	ErrCodeUserExists        = 20001
-	ErrCodeTokenInvalid      = 20002
-	ErrCodePasswordIncorrect = 20003
-	ErrCodeUserInBlacklist   = 20004
-	ErrCodeUserNotFound      = 20005
-	ErrCodeTokenExpired      = 20006
 
-	// ---- 文章服务 (30000-39999) ----
-	ErrCodeArticleNotFound = 30001
-
-	// ---- 评论服务 (40000-49999) ----
-	ErrCodeCommentNotFound  = 40001
-	ErrCodeCommentDisabled  = 40003
-	ErrCodeCommentBlacklist = 40004
-)
 
 // ============================================================================
 // 运维相关默认值
