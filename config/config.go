@@ -492,6 +492,21 @@ func ApplyEnvOverrides(c *Config) {
 		}
 	}
 
+	// HTTP Port — 覆盖 app.port / http.port（docker-compose 经 environment 注入同名变量）
+	if v := os.Getenv(constants.EnvHTTPPort); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			c.App.Port = port
+			c.HTTP.Port = port
+		}
+	}
+
+	// Metrics Port — 覆盖 metrics.port
+	if v := os.Getenv(constants.EnvMetricsPort); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			c.Metrics.Port = port
+		}
+	}
+
 	// MinIO 对象存储
 	if v := os.Getenv(constants.EnvMinIOEnabled); v != "" {
 		c.MinIO.Enabled = v == "true" || v == "1"

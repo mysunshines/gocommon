@@ -405,6 +405,12 @@ const (
 	// EnvGRPCPort gRPC 监听端口
 	EnvGRPCPort = "GRPC_PORT"
 
+	// EnvHTTPPort HTTP 监听端口（覆盖 app.port / http.port，docker-compose 经 environment 注入）
+	EnvHTTPPort = "HTTP_PORT"
+
+	// EnvMetricsPort Prometheus metrics 监听端口（覆盖 metrics.port）
+	EnvMetricsPort = "METRICS_PORT"
+
 	// ---- 数据库 ----
 	EnvDBHost     = "DB_HOST"
 	EnvDBPort     = "DB_PORT"
