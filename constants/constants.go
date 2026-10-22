@@ -25,6 +25,12 @@ const (
 	// DateTimeISO8601 ISO 8601 / RFC 3339 时间格式: 2006-01-02T15:04:05Z
 	DateTimeISO8601 = "2006-01-02T15:04:05Z"
 
+	// DateTimeMilli 含毫秒的日期时间格式: 2006-01-02 15:04:05.000
+	DateTimeMilli = "2006-01-02 15:04:05.000"
+
+	// DateTimeISO8601Offset 带时区偏移（如 -07:00）的 ISO8601 格式: 2006-01-02T15:04:05-07:00
+	DateTimeISO8601Offset = "2006-01-02T15:04:05-07:00"
+
 	// DateTimeWithTZ 带时区缩写的时间格式: 2006-01-02 15:04:05 MST
 	DateTimeWithTZ = "2006-01-02 15:04:05 MST"
 
