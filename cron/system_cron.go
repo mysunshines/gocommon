@@ -175,30 +175,53 @@ func writeNotifyScript(path string) error {
 	script := `#!/bin/bash
 # 系统通知脚本
 # 用法: notify.sh "消息内容" "标题"
+#
+# Linux: -t 0 / expire_timeout=0 请求通知常驻（KDE/Xfce 遵守，GNOME 可能仍收起）；
+#        cron 环境缺桌面会话变量，这里按当前用户兜底补齐。
+# macOS: osascript display notification 无常驻参数，是否停留由系统通知样式决定。
 
 BODY="${1:-提醒}"
 TITLE="${2:-定时提醒}"
 
+# 只补缺失项，不覆盖显式传入的会话变量
+if [ -z "$XDG_RUNTIME_DIR" ] && [ -d "/run/user/$(id -u)" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -n "$XDG_RUNTIME_DIR" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+fi
+if [ -z "$DISPLAY" ]; then
+    export DISPLAY=:0
+fi
+
+log_fallback() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $TITLE: $BODY"
+}
+
 case "$(uname -s)" in
-	Darwin)
-		osascript -e "display notification \"$BODY\" with title \"$TITLE\"" 2>/dev/null
-		;;
-	Linux)
-		if command -v notify-send &>/dev/null; then
-			notify-send "$TITLE" "$BODY" 2>/dev/null
-		elif [ -n "$DBUS_SESSION_BUS_ADDRESS" ]; then
-			# 通过 dbus 直接发送
-			gdbus call --session \
-				--dest=org.freedesktop.Notifications \
-				--object-path=/org/freedesktop/Notifications \
-				--method=org.freedesktop.Notifications.Notify \
-				"toolshub" 0 "" "$TITLE" "$BODY" \
-				'[]' '{}' 5000 2>/dev/null || true
-		else
-			# 容器/无桌面环境：输出到日志
-			echo "[$(date '+%Y-%m-%d %H:%M:%S')] $TITLE: $BODY"
-		fi
-		;;
+    Darwin)
+        osascript -e "display notification \"$BODY\" with title \"$TITLE\"" 2>/dev/null || log_fallback
+        ;;
+    Linux)
+        # -u critical 提高紧急度；-t 0 表示永不过期
+        if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] && command -v notify-send >/dev/null 2>&1; then
+            notify-send -u critical -t 0 "$TITLE" "$BODY" 2>/dev/null && exit 0
+        fi
+        # expire_timeout=0 表示不过期；resident hint 进一步请求常驻
+        if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] && command -v gdbus >/dev/null 2>&1; then
+            gdbus call --session \
+                --dest=org.freedesktop.Notifications \
+                --object-path=/org/freedesktop/Notifications \
+                --method=org.freedesktop.Notifications.Notify \
+                "toolshub" 0 "" "$TITLE" "$BODY" \
+                "{'resident': <true>}" '{}' 0 2>/dev/null && exit 0
+        fi
+        # 容器 / 无桌面环境：输出到日志
+        log_fallback
+        ;;
+    *)
+        log_fallback
+        ;;
 esac
 `
 	return os.WriteFile(path, []byte(script), constants.FilePermDir)
